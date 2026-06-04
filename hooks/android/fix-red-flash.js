@@ -22,7 +22,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getConfigParser } = require('../utils');
+const { getConfigParser, normalizeHexColor } = require('../utils');
 
 function colorResourceRegex(colorName) {
   return new RegExp(`\\s*<color\\s+name=["']${colorName}["'][^>]*>[^<]*<\\/color>\\s*`, 'g');
@@ -92,6 +92,138 @@ function dedupeColorResources(root) {
       }
     }
   }
+}
+
+function getValuesXmlFiles(root) {
+  const resPath = path.join(root, 'platforms/android/app/src/main/res/values');
+
+  if (!fs.existsSync(resPath)) {
+    return [];
+  }
+
+  const priorityFiles = [
+    'colors.xml',
+    'cdv_colors.xml',
+    'themes.xml',
+    'styles.xml',
+    'cdv_themes.xml'
+  ];
+
+  const files = priorityFiles
+    .map(file => path.join(resPath, file))
+    .filter(filePath => fs.existsSync(filePath));
+
+  const extraFiles = fs.readdirSync(resPath)
+    .filter(file => file.endsWith('.xml'))
+    .map(file => path.join(resPath, file))
+    .filter(filePath => !files.includes(filePath));
+
+  return files.concat(extraFiles);
+}
+
+function readColorResource(content, colorName) {
+  const regex = new RegExp(`<color\\s+name=["']${colorName}["'][^>]*>([^<]*)<\\/color>`, 'i');
+  const match = content.match(regex);
+  return match && match[1] ? match[1].trim() : null;
+}
+
+function resolveColorValue(root, rawValue, seen = new Set()) {
+  if (!rawValue) {
+    return null;
+  }
+
+  const normalized = normalizeHexColor(rawValue.trim());
+  if (normalized) {
+    return { color: normalized, source: 'direct color' };
+  }
+
+  const colorRef = rawValue.trim().match(/^@color\/(.+)$/);
+  if (!colorRef) {
+    return null;
+  }
+
+  const colorName = colorRef[1];
+  if (seen.has(colorName)) {
+    return null;
+  }
+  seen.add(colorName);
+
+  return findGeneratedColorResource(root, colorName, seen);
+}
+
+function findGeneratedColorResource(root, colorName, seen = new Set()) {
+  for (const filePath of getValuesXmlFiles(root)) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const rawValue = readColorResource(content, colorName);
+    const resolved = resolveColorValue(root, rawValue, seen);
+
+    if (resolved) {
+      return {
+        color: resolved.color,
+        source: `${path.basename(filePath)}:${colorName}`
+      };
+    }
+  }
+
+  return null;
+}
+
+function findThemeWindowBackground(root) {
+  const themeFiles = getValuesXmlFiles(root).filter(filePath => {
+    const basename = path.basename(filePath);
+    return basename.includes('theme') || basename === 'styles.xml';
+  });
+
+  for (const filePath of themeFiles) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const match = content.match(/<item\s+name=["'](?:android:)?windowBackground["']>([^<]*)<\/item>/i);
+    if (!match || !match[1]) {
+      continue;
+    }
+
+    const resolved = resolveColorValue(root, match[1].trim());
+    if (resolved) {
+      return {
+        color: resolved.color,
+        source: `${path.basename(filePath)}:windowBackground`
+      };
+    }
+  }
+
+  return null;
+}
+
+function resolveGeneratedBackgroundColor(root) {
+  const candidateColorNames = [
+    'webview_background',
+    'cordova_splash_background',
+    'splash_background',
+    'cdv_splashscreen_background_color',
+    'cdv_background_color',
+    'cdv_splashscreen_background'
+  ];
+
+  for (const colorName of candidateColorNames) {
+    const resolved = findGeneratedColorResource(root, colorName);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return findThemeWindowBackground(root);
+}
+
+function getConfiguredBackgroundColor(config) {
+  return config.getPreference('BackgroundColor', 'android') ||
+         config.getPreference('BackgroundColor') ||
+         config.getPreference('SplashScreenBackgroundColor', 'android') ||
+         config.getPreference('SplashScreenBackgroundColor') ||
+         config.getPreference('AndroidWindowSplashScreenBackground', 'android') ||
+         config.getPreference('AndroidWindowSplashScreenBackground') ||
+         config.getPreference('AndroidWindowSplashScreenBackgroundColor', 'android') ||
+         config.getPreference('AndroidWindowSplashScreenBackgroundColor') ||
+         config.getPreference('WEBVIEW_BACKGROUND_COLOR', 'android') ||
+         config.getPreference('WEBVIEW_BACKGROUND_COLOR');
 }
 
 /**
@@ -354,28 +486,32 @@ function fixRedFlash(context) {
   const root = context.opts.projectRoot;
   const config = getConfigParser(context, path.join(root, 'config.xml'));
   
-  // Get native background color from preferences. BackgroundColor is the
-  // canonical OutSystems value; WEBVIEW_BACKGROUND_COLOR is only a fallback.
-  let backgroundColor = config.getPreference('BackgroundColor') ||
-                        config.getPreference('SplashScreenBackgroundColor') ||
-                        config.getPreference('AndroidWindowSplashScreenBackground') ||
-                        config.getPreference('AndroidWindowSplashScreenBackgroundColor') ||
-                        config.getPreference('WEBVIEW_BACKGROUND_COLOR');
+  let backgroundColor = getConfiguredBackgroundColor(config);
+  let backgroundSource = 'config.xml';
   
   if (!backgroundColor) {
-    console.log('\n⚠️  No background color configured, skipping red flash fix');
-    return;
+    const generatedBackground = resolveGeneratedBackgroundColor(root);
+    if (!generatedBackground) {
+      console.log('\n⚠️  No configured or generated background color found, skipping red flash fix');
+      return;
+    }
+
+    backgroundColor = generatedBackground.color;
+    backgroundSource = `generated Android resource (${generatedBackground.source})`;
   }
   
-  // Normalize color
-  if (!backgroundColor.startsWith('#')) {
-    backgroundColor = '#' + backgroundColor;
+  backgroundColor = normalizeHexColor(backgroundColor);
+
+  if (!backgroundColor) {
+    console.log('\n⚠️  Invalid background color, skipping red flash fix');
+    return;
   }
   
   console.log('\n══════════════════════════════════════════════');
   console.log('  🔧 FIX RED FLASH AFTER SPLASH SCREEN');
   console.log('══════════════════════════════════════════════');
   console.log(`🎨 Background color: ${backgroundColor}`);
+  console.log(`📌 Source: ${backgroundSource}`);
   console.log(`📂 Project root: ${root}`);
   
   // 1. Inject MainActivity background

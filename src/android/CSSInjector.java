@@ -2,6 +2,7 @@ package com.vnkhoado.cordova.plugin;
 
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Base64;
@@ -18,6 +19,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 public class CSSInjector extends CordovaPlugin {
 
@@ -75,6 +77,47 @@ public class CSSInjector extends CordovaPlugin {
         return safe;
     }
 
+    private String getGeneratedBackgroundColor() {
+        if (cordova == null || cordova.getActivity() == null) {
+            return null;
+        }
+
+        String[] colorNames = {
+            "webview_background",
+            "cordova_splash_background",
+            "splash_background",
+            "cdv_splashscreen_background_color",
+            "cdv_background_color",
+            "cdv_splashscreen_background"
+        };
+
+        String packageName = cordova.getActivity().getPackageName();
+        android.content.res.Resources resources = cordova.getActivity().getResources();
+
+        for (String colorName : colorNames) {
+            int colorId = resources.getIdentifier(colorName, "color", packageName);
+            if (colorId == 0) {
+                continue;
+            }
+
+            try {
+                int color;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    color = resources.getColor(colorId, cordova.getActivity().getTheme());
+                } else {
+                    color = resources.getColor(colorId);
+                }
+                String hexColor = String.format(Locale.US, "#%06X", (0xFFFFFF & color));
+                android.util.Log.d(TAG, "Resolved generated background color " + hexColor + " from @" + colorName);
+                return hexColor;
+            } catch (Exception e) {
+                android.util.Log.w(TAG, "Could not read generated color @" + colorName, e);
+            }
+        }
+
+        return null;
+    }
+
     @Override
     public void pluginInitialize() {
         super.pluginInitialize();
@@ -98,15 +141,23 @@ public class CSSInjector extends CordovaPlugin {
         }
         
         if (bgColor == null || bgColor.isEmpty()) {
-            backgroundColor = null;
-            android.util.Log.d(TAG, "No custom background color configured; preserving default app colors");
+            bgColor = getGeneratedBackgroundColor();
+            if (bgColor == null || bgColor.isEmpty()) {
+                backgroundColor = null;
+                android.util.Log.d(TAG, "No custom or generated background color found; preserving default app colors");
+            } else {
+                backgroundColor = bgColor.trim();
+                android.util.Log.d(TAG, "Using generated default app background: " + backgroundColor);
+            }
         } else if (!isValidHexColor(bgColor)) {
             backgroundColor = null;
             android.util.Log.e(TAG, "Invalid background color format; preserving default app colors");
         } else {
             backgroundColor = bgColor.trim();
+        }
 
-            // Set WebView and Activity background only when a color is explicitly configured.
+        if (backgroundColor != null && !backgroundColor.isEmpty()) {
+            // Set WebView and Activity background using either configured or generated app color.
             final String finalBgColor = backgroundColor;
             cordova.getActivity().runOnUiThread(() -> {
                 try {
