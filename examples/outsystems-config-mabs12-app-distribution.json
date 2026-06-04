@@ -1,0 +1,106 @@
+{
+  "plugin": {
+    "url": "https://github.com/khoado-rgb/cordova-plugin-change-app-info.git#test/mabs12-build"
+  },
+  "preferences": {
+    "global": [
+      {
+        "name": "orientation",
+        "value": "portrait"
+      },
+      {
+        "name": "APP_NAME",
+        "value": "My App"
+      },
+      {
+        "name": "CDN_ICON",
+        "value": "https://cdn.example.com/assets/app/icon.png"
+      },
+      {
+        "name": "CDN_RESOURCE",
+        "value": "https://cdn.example.com/assets/app/app.css"
+      },
+      {
+        "name": "APP_DISTRIBUTION_API",
+        "value": "https://api.example.com/app-distribution"
+      },
+      {
+        "name": "APP_DISTRIBUTION_BEARER_TOKEN",
+        "value": "REPLACE_WITH_APP_DISTRIBUTION_BEARER_TOKEN"
+      },
+      {
+        "name": "AutoHideSplashScreen",
+        "value": "true"
+      },
+      {
+        "name": "TENANT_ID",
+        "value": "1234"
+      }
+    ],
+    "android": [
+      {
+        "name": "SplashScreenDelay",
+        "value": "1500"
+      },
+      {
+        "name": "FadeSplashScreen",
+        "value": "true"
+      },
+      {
+        "name": "FadeSplashScreenDuration",
+        "value": "300"
+      },
+      {
+        "name": "AndroidLaunchMode",
+        "value": "singleTask"
+      }
+    ],
+    "ios": [
+      {
+        "name": "FadeSplashScreen",
+        "value": "true"
+      },
+      {
+        "name": "FadeSplashScreenDuration",
+        "value": "300"
+      },
+      {
+        "name": "NSCameraUsageDescription",
+        "value": "Camera access is required to take photos for app features."
+      },
+      {
+        "name": "NSLocationWhenInUseUsageDescription",
+        "value": "Location access is required while using the app."
+      },
+      {
+        "name": "NSLocationAlwaysAndWhenInUseUsageDescription",
+        "value": "Location access is required to support location-based app features."
+      },
+      {
+        "name": "NSPhotoLibraryAddUsageDescription",
+        "value": "Photo library access is required to upload photos or videos."
+      },
+      {
+        "name": "NSPhotoLibraryUsageDescription",
+        "value": "Photo library access is required to upload photos or videos."
+      },
+      {
+        "name": "NSMicrophoneUsageDescription",
+        "value": "Microphone access is required for voice recording features."
+      },
+      {
+        "name": "AllowInlineMediaPlayback",
+        "value": "true"
+      },
+      {
+        "name": "NSAllowsArbitraryLoads",
+        "value": "false"
+      }
+    ]
+  },
+  "access": [
+    {
+      "origin": "https://*"
+    }
+  ]
+}

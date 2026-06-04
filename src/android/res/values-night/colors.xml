@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Splash screen background color for dark mode -->
+    <!-- Fallback only - build hooks override this from the BackgroundColor preference -->
+    <color name="cordova_splash_background">#FFFFFF</color>
+</resources>

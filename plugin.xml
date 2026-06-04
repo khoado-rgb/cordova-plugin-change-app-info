@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
+    id="cordova-plugin-change-app-info"
+    version="2.9.20">
+    
+    <name>Change App Info</name>
+    <description>Cordova plugin to change app display name, version and icon from CDN at build time. E2EE Security for TOTP.</description>
+    <license>MIT</license>
+    <keywords>cordova,app,info,outsystems,totp,e2ee,rsa,aes,security</keywords>
+    <author>vnkhoado</author>
+    <repo>https://github.com/vnkhoado/cordova-plugin-change-app-info.git</repo>
+    
+    <engines>
+        <engine name="cordova" version=">=9.0.0" />
+    </engines>
+
+    <js-module src="www/CSSInjector.js" name="CSSInjector">
+        <clobbers target="cordova.plugins.CSSInjector" />
+    </js-module>
+
+    <js-module src="www/SecureTotpPlugin.js" name="SecureTotpPlugin">
+        <clobbers target="cordova.plugins.SecureTotpPlugin" />
+    </js-module>
+    
+    <platform name="android">
+        
+        <config-file target="res/xml/config.xml" parent="/*">
+            <feature name="CSSInjector">
+                <param name="android-package" value="com.vnkhoado.cordova.plugin.CSSInjector" />
+                <param name="onload" value="true" />
+            </feature>
+            <feature name="SecureTotpPlugin">
+                <param name="android-package" value="com.vnkhoado.cordova.plugin.SecureTotpPlugin" />
+            </feature>
+        </config-file>
+        
+        <source-file src="src/android/CSSInjector.java" target-dir="src/com/vnkhoado/cordova/plugin" />
+        
+        <source-file src="src/android/LogUtil.java" target-dir="src/com/vnkhoado/cordova/plugin" />
+        <source-file src="src/android/SecureTotpManager.java" target-dir="src/com/vnkhoado/cordova/plugin" />
+        <source-file src="src/android/SecureTotpPlugin.java" target-dir="src/com/vnkhoado/cordova/plugin" />
+
+        <framework src="androidx.security:security-crypto:1.1.0" />
+        
+        <hook type="before_prepare" src="hooks/downloadCDNResources.js" />
+        <hook type="before_prepare" src="scripts/auto-install-deps.js" />
+        <hook type="before_prepare" src="hooks/backupAppInfo.js" />
+        
+        <hook type="after_prepare" src="hooks/android/unified-prepare.js" />
+        <hook type="after_prepare" src="hooks/injectBuildInfo.js" />
+        <hook type="after_prepare" src="hooks/customizeColors.js" />
+        
+        <hook type="before_compile" src="hooks/android/unified-compile.js" />
+        
+        <hook type="after_build" src="hooks/sendBuildSuccess.js" />
+        
+    </platform>
+    
+    <platform name="ios">
+
+        <config-file target="config.xml" parent="/*">
+            <preference name="SwiftVersion" value="5" />
+            <feature name="CSSInjector">
+                <param name="ios-package" value="CSSInjector" />
+                <param name="onload" value="true" />
+            </feature>
+            <feature name="SecureTotpPlugin">
+                <param name="ios-package" value="SecureTotpPlugin" />
+            </feature>
+        </config-file>
+
+        <config-file target="*-Info.plist" parent="CFBundleIconName">
+            <string>AppIcon</string>
+        </config-file>
+        
+        <source-file src="src/ios/CSSInjector.swift" />
+        <source-file src="src/ios/SecureTotpManager.swift" />
+        <source-file src="src/ios/SecureTotpPlugin.swift" />
+
+        <resource-file src="src/ios/ChangeAppInfoPrivacy.bundle" target="ChangeAppInfoPrivacy.bundle" />
+        
+        <framework src="Security.framework" />
+        <framework src="WebKit.framework" />
+        
+        <hook type="before_prepare" src="hooks/downloadCDNResources.js" />
+        <hook type="before_prepare" src="scripts/auto-install-deps.js" />
+        <hook type="before_prepare" src="hooks/backupAppInfo.js" />
+        <hook type="before_prepare" src="hooks/ios-cache-clear.js" />
+        <hook type="after_prepare" src="hooks/ios/unified-prepare-standalone.js" />
+        <hook type="after_prepare" src="hooks/ios/inject-gradient-splash.js" />
+        <hook type="after_prepare" src="hooks/injectBuildInfo.js" />
+        <hook type="after_prepare" src="hooks/customizeColors.js" />
+        <hook type="before_compile" src="hooks/ios/force-metadata-override.js" />
+        <hook type="before_compile" src="hooks/ios/fix-splash-flicker.js" />
+        <hook type="before_build" src="hooks/ios/unified-build.js" />
+        <hook type="after_build" src="hooks/sendBuildSuccess.js" />
+    </platform>
+</plugin>

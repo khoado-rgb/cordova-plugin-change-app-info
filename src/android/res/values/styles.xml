@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Splash Theme - Applied BEFORE any Java code runs -->
+    <!-- This prevents red/white flash by setting window background immediately -->
+    <style name="CordovaSplashTheme" parent="Theme.AppCompat.NoActionBar">
+        <!-- Set window background immediately -->
+        <item name="android:windowBackground">@color/cordova_splash_background</item>
+        
+        <!-- No title bar -->
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        
+        <!-- Fullscreen settings -->
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:windowContentOverlay">@null</item>
+        
+        <!-- Prevent window animations that show default background -->
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowDisablePreview">false</item>
+    </style>
+</resources>

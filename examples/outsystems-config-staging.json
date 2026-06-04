@@ -1,0 +1,38 @@
+{
+  "name": "OutSystems Staging Configuration",
+  "description": "Sample configuration for OutSystems MABS - Staging environment",
+  "plugin": {
+    "url": "https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.7.0"
+  },
+  "preferences": {
+    "global": [
+      {
+        "name": "APP_NAME",
+        "value": "MyApp STG"
+      },
+      {
+        "name": "VERSION_NUMBER",
+        "value": "1.0.0-staging"
+      },
+      {
+        "name": "VERSION_CODE",
+        "value": "2"
+      },
+      {
+        "name": "ENVIRONMENT",
+        "value": "staging"
+      },
+      {
+        "name": "CDN_ICON",
+        "value": "https://yourcdn.com/app-icon-staging-1024.png"
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "plugin": {
+        "url": "cordova-sqlite-storage@6.1.0"
+      }
+    }
+  ]
+}
