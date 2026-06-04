@@ -24,6 +24,76 @@ const fs = require('fs');
 const path = require('path');
 const { getConfigParser } = require('../utils');
 
+function colorResourceRegex(colorName) {
+  return new RegExp(`\\s*<color\\s+name=["']${colorName}["'][^>]*>[^<]*<\\/color>\\s*`, 'g');
+}
+
+function hasColorResource(content, colorName) {
+  return new RegExp(`<color\\s+name=["']${colorName}["']`, 'i').test(content);
+}
+
+function setOrAddColorResource(content, colorName, colorValue) {
+  const updateRegex = new RegExp(`(<color\\s+name=["']${colorName}["'][^>]*>)([^<]*)(<\\/color>)`, 'i');
+  if (updateRegex.test(content)) {
+    return content.replace(updateRegex, `$1${colorValue}$3`);
+  }
+
+  return content.replace(
+    '</resources>',
+    `    <color name="${colorName}">${colorValue}</color>\n</resources>`
+  );
+}
+
+function removeColorResource(content, colorName) {
+  return content.replace(colorResourceRegex(colorName), '\n');
+}
+
+function dedupeColorResources(root) {
+  const resPath = path.join(root, 'platforms/android/app/src/main/res/values');
+
+  if (!fs.existsSync(resPath)) {
+    return;
+  }
+
+  const files = fs.readdirSync(resPath)
+    .filter(file => file.endsWith('.xml'))
+    .map(file => path.join(resPath, file));
+
+  const keepPreference = {
+    cdv_splashscreen_background_color: ['cdv_colors.xml'],
+    cdv_background_color: ['cdv_colors.xml'],
+    cdv_splashscreen_background: ['cdv_colors.xml'],
+    splash_background: ['colors.xml'],
+    webview_background: ['colors.xml']
+  };
+
+  for (const [colorName, preferredFiles] of Object.entries(keepPreference)) {
+    const owners = files.filter(filePath => {
+      const content = fs.readFileSync(filePath, 'utf8');
+      return hasColorResource(content, colorName);
+    });
+
+    if (owners.length <= 1) {
+      continue;
+    }
+
+    const keepFile = owners.find(filePath => preferredFiles.includes(path.basename(filePath))) || owners[0];
+
+    for (const filePath of owners) {
+      if (filePath === keepFile) {
+        continue;
+      }
+
+      const originalContent = fs.readFileSync(filePath, 'utf8');
+      const updatedContent = removeColorResource(originalContent, colorName);
+      if (updatedContent !== originalContent) {
+        fs.writeFileSync(filePath, updatedContent, 'utf8');
+        console.log(`   ✅ Removed duplicate ${colorName} from ${path.basename(filePath)}`);
+      }
+    }
+  }
+}
+
 /**
  * Find MainActivity.java in the project
  */
@@ -182,34 +252,29 @@ function syncAllColorFiles(root, backgroundColor) {
   if (fs.existsSync(cdvColorsPath)) {
     let content = fs.readFileSync(cdvColorsPath, 'utf8');
     
-    // Ensure all background-related colors match
+    // Keep Cordova cdv_* colors in cdv_colors.xml only.
     const colorNames = [
       'cdv_splashscreen_background_color',
-      'cdv_background_color',
-      'splash_background',
-      'webview_background'
+      'cdv_background_color'
     ];
     
     let modified = false;
     for (const colorName of colorNames) {
-      const regex = new RegExp(`<color name="${colorName}">([^<]*)</color>`);
-      if (regex.test(content)) {
-        const oldContent = content;
-        content = content.replace(regex, `<color name="${colorName}">${backgroundColor}</color>`);
-        if (oldContent !== content) modified = true;
-      } else {
-        // Add if missing
-        content = content.replace(
-          '</resources>',
-          `    <color name="${colorName}">${backgroundColor}</color>\n</resources>`
-        );
+      const oldContent = content;
+      content = setOrAddColorResource(content, colorName, backgroundColor);
+      if (oldContent !== content) modified = true;
+    }
+
+    for (const legacyColorName of ['splash_background', 'webview_background']) {
+      if (hasColorResource(content, legacyColorName)) {
+        content = removeColorResource(content, legacyColorName);
         modified = true;
       }
     }
     
     if (modified) {
       fs.writeFileSync(cdvColorsPath, content, 'utf8');
-      console.log('   ✅ Synchronized all color definitions');
+      console.log('   ✅ Synchronized cdv color definitions');
     }
   }
   
@@ -225,18 +290,9 @@ function syncAllColorFiles(root, backgroundColor) {
     
     let modified = false;
     for (const colorName of colorNames) {
-      const regex = new RegExp(`<color name="${colorName}">([^<]*)</color>`);
-      if (regex.test(content)) {
-        const oldContent = content;
-        content = content.replace(regex, `<color name="${colorName}">${backgroundColor}</color>`);
-        if (oldContent !== content) modified = true;
-      } else {
-        content = content.replace(
-          '</resources>',
-          `    <color name="${colorName}">${backgroundColor}</color>\n</resources>`
-        );
-        modified = true;
-      }
+      const oldContent = content;
+      content = setOrAddColorResource(content, colorName, backgroundColor);
+      if (oldContent !== content) modified = true;
     }
     
     if (modified) {
@@ -264,6 +320,10 @@ function updateThemeFiles(root, backgroundColor) {
       let content = fs.readFileSync(themePath, 'utf8');
       let modified = false;
       
+      const colorReference = themeFile === 'cdv_themes.xml'
+        ? '@color/cdv_splashscreen_background_color'
+        : '@color/splash_background';
+
       // Update all windowBackground references
       const patterns = [
         /<item name="android:windowBackground">([^<]*)<\/item>/g,
@@ -274,7 +334,7 @@ function updateThemeFiles(root, backgroundColor) {
         const oldContent = content;
         content = content.replace(
           pattern,
-          '<item name="android:windowBackground">@color/splash_background</item>'
+          `<item name="android:windowBackground">${colorReference}</item>`
         );
         if (oldContent !== content) modified = true;
       }
@@ -334,6 +394,7 @@ function fixRedFlash(context) {
   // 2. Sync all color files
   console.log('\n🎨 Step 2: Synchronize color files');
   syncAllColorFiles(root, backgroundColor);
+  dedupeColorResources(root);
   
   // 3. Update theme files
   console.log('\n🎨 Step 3: Update theme files');

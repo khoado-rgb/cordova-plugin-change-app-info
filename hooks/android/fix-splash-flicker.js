@@ -44,7 +44,12 @@ function fixAndroidSplashFlicker(context) {
   
   // Read colors from config.xml (NO HARDCODING!)
   const configPath = path.join(root, 'config.xml');
-  const { oldColor, newColor } = readColorConfigFromXml(configPath);
+  const { oldColor, newColor, hasNewColor } = readColorConfigFromXml(configPath);
+
+  if (!hasNewColor) {
+    log(colors.yellow, '⚠️  No custom splash/background color configured, preserving default OutSystems/MABS colors');
+    return;
+  }
   
   log(colors.reset, `🎯 Replacing "${oldColor}" with "${newColor}" at final phase...`);
   
