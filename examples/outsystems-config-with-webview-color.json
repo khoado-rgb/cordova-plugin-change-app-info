@@ -1,0 +1,43 @@
+{
+  "name": "OutSystems Configuration with Custom Webview Color",
+  "description": "Sample configuration for OutSystems MABS with custom pre-render webview background color",
+  "plugin": {
+    "url": "https://github.com/vnkhoado/cordova-plugin-change-app-info.git#master"
+  },
+  "preferences": {
+    "global": [
+      {
+        "name": "APP_NAME",
+        "value": "MyApp"
+      },
+      {
+        "name": "VERSION_NUMBER",
+        "value": "1.0.0"
+      },
+      {
+        "name": "VERSION_CODE",
+        "value": "1"
+      },
+      {
+        "name": "ENVIRONMENT",
+        "value": "production"
+      },
+      {
+        "name": "CDN_ICON",
+        "value": "https://yourcdn.com/app-icon-1024.png"
+      },
+      {
+        "name": "WEBVIEW_BACKGROUND_COLOR",
+        "value": "#FFFFFF",
+        "_comment": "Hex color for pre-render webview background. Common values: #FFFFFF (white), #000000 (black), #F5F5F5 (light gray)"
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "plugin": {
+        "url": "cordova-sqlite-storage@6.1.0"
+      }
+    }
+  ]
+}

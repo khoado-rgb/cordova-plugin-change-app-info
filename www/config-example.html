@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Config Loader Example</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+        
+        .section {
+            margin-bottom: 20px;
+        }
+        
+        .section h2 {
+            color: #555;
+            font-size: 16px;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #007AFF;
+            padding-bottom: 8px;
+        }
+        
+        .config-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .config-item:last-child {
+            border-bottom: none;
+        }
+        
+        .config-label {
+            font-weight: 500;
+            color: #555;
+        }
+        
+        .config-value {
+            color: #007AFF;
+            text-align: right;
+            flex: 1;
+            margin-left: 10px;
+            word-break: break-all;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+        
+        button {
+            padding: 10px 15px;
+            background: #007AFF;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            flex: 1;
+            min-width: 100px;
+        }
+        
+        button:hover {
+            background: #0051D5;
+        }
+        
+        button:active {
+            background: #003FAD;
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
+        .status.loading {
+            background: #FFF3CD;
+            color: #856404;
+        }
+        
+        .status.success {
+            background: #D4EDDA;
+            color: #155724;
+        }
+        
+        .status.error {
+            background: #F8D7DA;
+            color: #721C24;
+        }
+        
+        .history-item {
+            background: #f9f9f9;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        
+        .history-date {
+            color: #999;
+            font-size: 12px;
+        }
+        
+        .history-status {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: 500;
+            font-size: 11px;
+            margin-top: 4px;
+        }
+        
+        .history-status.success {
+            background: #D4EDDA;
+            color: #155724;
+        }
+        
+        .history-status.error {
+            background: #F8D7DA;
+            color: #721C24;
+        }
+        
+        pre {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        
+        .empty {
+            text-align: center;
+            color: #999;
+            padding: 20px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📄 App Configuration Loader</h1>
+        
+        <div id="status" class="status loading" style="display: none;">
+            Loading configuration...
+        </div>
+        
+        <!-- App Configuration Section -->
+        <div class="section">
+            <h2>💻 App Info</h2>
+            <div id="appConfig">
+                <div class="empty">Loading...</div>
+            </div>
+        </div>
+        
+        <!-- Metadata Section -->
+        <div class="section">
+            <h2>📁 Metadata</h2>
+            <div id="metadata">
+                <div class="empty">Loading...</div>
+            </div>
+        </div>
+        
+        <!-- Build History Section -->
+        <div class="section">
+            <h2>💼 Build History</h2>
+            <div id="history">
+                <div class="empty">Loading...</div>
+            </div>
+        </div>
+        
+        <!-- Actions -->
+        <div class="button-group">
+            <button onclick="reloadConfig()">🔄 Reload Config</button>
+            <button onclick="showRawConfig()">📋 Raw JSON</button>
+            <button onclick="clearStatus()">Clear</button>
+        </div>
+    </div>
+    
+    <!-- Config Loader Script -->
+    <script src="js/config-loader.js"></script>
+    
+    <!-- App Script -->
+    <script>
+        /**
+         * Display app configuration
+         */
+        async function displayConfig() {
+            showStatus('loading', 'Loading configuration...');
+            
+            try {
+                const config = await configLoader.load();
+                
+                if (config) {
+                    // Display app config
+                    displayAppConfig(config);
+                    
+                    // Display metadata
+                    const metadata = await configLoader.getMetadata();
+                    displayMetadata(metadata);
+                    
+                    // Display build history
+                    const history = await configLoader.loadHistory(5);
+                    displayHistory(history);
+                    
+                    showStatus('success', '✅ Configuration loaded successfully');
+                } else {
+                    showStatus('error', '❌ No configuration found. Build info not available.');
+                    document.getElementById('appConfig').innerHTML = '<div class="empty">No config available</div>';
+                    document.getElementById('metadata').innerHTML = '<div class="empty">No metadata available</div>';
+                    document.getElementById('history').innerHTML = '<div class="empty">No build history</div>';
+                }
+            } catch (error) {
+                showStatus('error', `❌ Error: ${error.message}`);
+                console.error('Config load error:', error);
+            }
+        }
+        
+        /**
+         * Display app configuration items
+         */
+        function displayAppConfig(config) {
+            let html = '';
+            const items = [
+                { label: 'App Name', value: config.appName || 'N/A' },
+                { label: 'App ID', value: config.appId || 'N/A' },
+                { label: 'Version', value: config.appVersion || 'N/A' },
+                { label: 'Author', value: config.author || 'N/A' },
+                { label: 'Description', value: config.appDescription || 'N/A' }
+            ];
+            
+            items.forEach(item => {
+                html += `
+                    <div class="config-item">
+                        <span class="config-label">${item.label}</span>
+                        <span class="config-value">${item.value}</span>
+                    </div>
+                `;
+            });
+            
+            document.getElementById('appConfig').innerHTML = html || '<div class="empty">No config items</div>';
+        }
+        
+        /**
+         * Display metadata
+         */
+        function displayMetadata(metadata) {
+            let html = '';
+            
+            if (metadata && Object.keys(metadata).length > 0) {
+                Object.entries(metadata).forEach(([key, value]) => {
+                    html += `
+                        <div class="config-item">
+                            <span class="config-label">${formatKey(key)}</span>
+                            <span class="config-value">${value}</span>
+                        </div>
+                    `;
+                });
+            }
+            
+            document.getElementById('metadata').innerHTML = html || '<div class="empty">No metadata</div>';
+        }
+        
+        /**
+         * Display build history
+         */
+        function displayHistory(history) {
+            let html = '';
+            
+            if (history && history.length > 0) {
+                history.forEach(entry => {
+                    const date = new Date(entry.timestamp).toLocaleString();
+                    const status = entry.success ? 'success' : 'error';
+                    const statusText = entry.success ? '✅ Success' : '❌ Failed';
+                    
+                    html += `
+                        <div class="history-item">
+                            <div><strong>${entry.platform || 'Unknown'}</strong></div>
+                            <div class="history-date">Build: ${entry.buildId || 'N/A'}</div>
+                            <div class="history-date">${date}</div>
+                            <div class="history-status ${status}">${statusText}</div>
+                        </div>
+                    `;
+                });
+            }
+            
+            document.getElementById('history').innerHTML = html || '<div class="empty">No build history</div>';
+        }
+        
+        /**
+         * Format config key for display
+         */
+        function formatKey(key) {
+            return key
+                .replace(/([A-Z])/g, ' $1')
+                .replace(/^./, str => str.toUpperCase())
+                .trim();
+        }
+        
+        /**
+         * Show status message
+         */
+        function showStatus(type, message) {
+            const element = document.getElementById('status');
+            element.className = `status ${type}`;
+            element.textContent = message;
+            element.style.display = 'block';
+        }
+        
+        /**
+         * Clear status
+         */
+        function clearStatus() {
+            document.getElementById('status').style.display = 'none';
+        }
+        
+        /**
+         * Reload configuration
+         */
+        function reloadConfig() {
+            clearStatus();
+            displayConfig();
+        }
+        
+        /**
+         * Show raw JSON
+         */
+        async function showRawConfig() {
+            const config = await configLoader.load();
+            const history = await configLoader.loadHistory();
+            
+            const data = {
+                config: config,
+                buildHistory: history
+            };
+            
+            alert(JSON.stringify(data, null, 2));
+        }
+        
+        // Load config on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            displayConfig();
+        });
+        
+        // Also load on Cordova ready
+        if (typeof deviceready !== 'undefined') {
+            document.addEventListener('deviceready', displayConfig, false);
+        }
+    </script>
+</body>
+</html>

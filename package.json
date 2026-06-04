@@ -1,0 +1,69 @@
+{
+  "name": "cordova-plugin-change-app-info",
+  "version": "2.9.11",
+  "description": "Cordova plugin to change app info with iOS optimization, gradient splash screens, and JSON config storage",
+  "main": "index.js",
+  "scripts": {
+    "setup": "node scripts/auto-install-deps.js",
+    "cleanup:ios": "node scripts/cleanup-old-ios-hooks.js",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vnkhoado/cordova-plugin-change-app-info.git"
+  },
+  "keywords": [
+    "cordova",
+    "plugin",
+    "app-info",
+    "ios",
+    "android",
+    "optimization",
+    "gradient",
+    "splash-screen",
+    "config-storage",
+    "json",
+    "ecosystem:cordova",
+    "cordova-ios",
+    "cordova-android",
+    "cdn-icons",
+    "native-gradient"
+  ],
+  "author": "vnkhoado",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/vnkhoado/cordova-plugin-change-app-info/issues"
+  },
+  "homepage": "https://github.com/vnkhoado/cordova-plugin-change-app-info#readme",
+  "peerDependencies": {
+    "sharp": "^0.32.0 || ^0.33.0",
+    "jimp": "^1.6.0"
+  },
+  "peerDependenciesMeta": {
+    "sharp": {
+      "optional": true
+    },
+    "jimp": {
+      "optional": true
+    }
+  },
+  "optionalDependencies": {
+    "jimp": "^1.6.1",
+    "sharp": "^0.33.0"
+  },
+  "engines": {
+    "node": ">=14.0.0",
+    "npm": ">=6.0.0"
+  },
+  "_comment": {
+    "dependencies": "Build-time Node.js dependencies",
+    "sharp": "Fast image processing for icons and gradient splash generation (RECOMMENDED)",
+    "jimp": "Fallback image processor (pure JS) for icons and gradients",
+    "config-storage": "Uses JSON files instead of sqlite - works on all cloud builds",
+    "auto-install": "Dependencies auto-install via 'npm install' - runs at before_prepare hook",
+    "gradient-support": "CSS gradient support for native splash screens on Android and iOS",
+    "usage": "Add SPLASH_GRADIENT preference to config.xml with linear-gradient CSS value",
+    "note": "No need to manually install - auto-install-deps.js handles everything during build",
+    "removed-in-2.9.11": "Removed sqlite3 and better-sqlite3 - using JSON config storage instead (works everywhere)"
+  }
+}

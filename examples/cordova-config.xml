@@ -1,0 +1,32 @@
+<?xml version='1.0' encoding='utf-8'?>
+<widget id="com.example.myapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets">
+    <name>MyApp</name>
+    <description>Sample Cordova app with build info plugin</description>
+    <author email="dev@example.com" href="https://example.com">Your Company</author>
+    
+    <!-- Plugin Configuration -->
+    <plugin name="cordova-plugin-change-app-info" spec="https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.7.0" />
+    <plugin name="cordova-sqlite-storage" spec="~6.1.0" />
+    
+    <!-- Build Info Configuration - Development -->
+    <preference name="APP_NAME" value="MyApp DEV" />
+    <preference name="VERSION_NUMBER" value="1.0.0-dev" />
+    <preference name="VERSION_CODE" value="1" />
+    <preference name="ENVIRONMENT" value="development" />
+    <preference name="CDN_ICON" value="https://yourcdn.com/app-icon-dev-1024.png" />
+    
+    <!-- Optional: Build Notification (comment out for dev) -->
+    <!-- 
+    <preference name="ENABLE_BUILD_NOTIFICATION" value="false" />
+    -->
+    
+    <!-- Platform-specific settings -->
+    <platform name="android">
+        <preference name="android-minSdkVersion" value="22" />
+        <preference name="android-targetSdkVersion" value="33" />
+    </platform>
+    
+    <platform name="ios">
+        <preference name="deployment-target" value="12.0" />
+    </platform>
+</widget>

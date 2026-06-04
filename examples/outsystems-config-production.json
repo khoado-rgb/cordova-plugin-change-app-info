@@ -1,0 +1,50 @@
+{
+  "name": "OutSystems Production Configuration",
+  "description": "Sample configuration for OutSystems MABS - Production environment",
+  "plugin": {
+    "url": "https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.7.0"
+  },
+  "preferences": {
+    "global": [
+      {
+        "name": "APP_NAME",
+        "value": "MyApp"
+      },
+      {
+        "name": "VERSION_NUMBER",
+        "value": "1.0.0"
+      },
+      {
+        "name": "VERSION_CODE",
+        "value": "10"
+      },
+      {
+        "name": "ENVIRONMENT",
+        "value": "production"
+      },
+      {
+        "name": "CDN_ICON",
+        "value": "https://yourcdn.com/app-icon-1024.png"
+      },
+      {
+        "name": "ENABLE_BUILD_NOTIFICATION",
+        "value": "true"
+      },
+      {
+        "name": "BUILD_SUCCESS_API_URL",
+        "value": "https://api.yourcompany.com/build-notifications"
+      },
+      {
+        "name": "BUILD_API_BEARER_TOKEN",
+        "value": "your-secret-bearer-token-here"
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "plugin": {
+        "url": "cordova-sqlite-storage@6.1.0"
+      }
+    }
+  ]
+}

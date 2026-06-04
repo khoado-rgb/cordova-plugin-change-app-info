@@ -1,0 +1,48 @@
+{
+  "name": "OutSystems Configuration with Custom Splash Screen Color",
+  "description": "Sample configuration for OutSystems MABS with custom native splash screen background color",
+  "plugin": {
+    "url": "https://github.com/vnkhoado/cordova-plugin-change-app-info.git#master"
+  },
+  "preferences": {
+    "global": [
+      {
+        "name": "APP_NAME",
+        "value": "MyApp"
+      },
+      {
+        "name": "VERSION_NUMBER",
+        "value": "1.0.0"
+      },
+      {
+        "name": "VERSION_CODE",
+        "value": "1"
+      },
+      {
+        "name": "ENVIRONMENT",
+        "value": "production"
+      },
+      {
+        "name": "CDN_ICON",
+        "value": "https://yourcdn.com/app-icon-1024.png"
+      },
+      {
+        "name": "SPLASH_BACKGROUND_COLOR",
+        "value": "#001833",
+        "_comment": "Hex color for native splash screen background. This is the color shown during app launch before webview loads."
+      },
+      {
+        "name": "WEBVIEW_BACKGROUND_COLOR",
+        "value": "#001833",
+        "_comment": "Optional: Match webview background with splash for smooth transition"
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "plugin": {
+        "url": "cordova-sqlite-storage@6.1.0"
+      }
+    }
+  ]
+}
