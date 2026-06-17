@@ -397,9 +397,12 @@ function syncAllColorFiles(root, backgroundColor) {
       if (oldContent !== content) modified = true;
     }
 
+    // CRITICAL: Remove legacy names from cdv_colors.xml to prevent
+    // "Duplicate resources" build failure (they belong in colors.xml).
     for (const legacyColorName of ['splash_background', 'webview_background']) {
       if (hasColorResource(content, legacyColorName)) {
         content = removeColorResource(content, legacyColorName);
+        console.log(`   ✅ Removed duplicate ${legacyColorName} from cdv_colors.xml`);
         modified = true;
       }
     }
