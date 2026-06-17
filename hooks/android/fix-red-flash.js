@@ -271,12 +271,22 @@ function injectMainActivityBackground(mainActivityPath, backgroundColor) {
   
   console.log(`   📄 Reading MainActivity from: ${mainActivityPath}`);
   let content = fs.readFileSync(mainActivityPath, 'utf8');
-  
-  // Check if already injected
-  if (content.includes('// FIX_RED_FLASH')) {
-    console.log('   ✓ MainActivity already patched');
+
+  // Idempotency: skip only when the *current* patch (incl. WebView) is present.
+  // Older patches set just the window background — strip them so we can re-inject
+  // the upgraded version that also sets WebView background.
+  const hasNewPatch = content.includes('FIX_RED_FLASH') && content.includes('appView.getView().setBackgroundColor');
+  if (hasNewPatch) {
+    console.log('   ✓ MainActivity already patched (current version)');
     console.log(`   📍 MainActivity path: ${mainActivityPath}`);
     return true;
+  }
+  if (content.includes('// FIX_RED_FLASH')) {
+    console.log('   ♻️  Stripping older FIX_RED_FLASH block for upgrade...');
+    content = content.replace(
+      /\n\s*\/\/ FIX_RED_FLASH[\s\S]*?android\.util\.Log\.e\("FixRedFlash"[\s\S]*?\}\s*\n/,
+      '\n'
+    );
   }
   
   // Add imports if needed - FIXED: Add both Color and ColorDrawable
@@ -312,7 +322,7 @@ function injectMainActivityBackground(mainActivityPath, backgroundColor) {
     console.log('   🎯 Found onCreate method, injecting background color...');
     content = content.replace(
       onCreateRegex,
-      `$1\n\n        // FIX_RED_FLASH: Set window background to prevent flash\n        try {\n            int bgColor = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));\n            getWindow().getDecorView().setBackgroundColor(bgColor);\n        } catch (Exception e) {\n            android.util.Log.e("FixRedFlash", "Failed to set background: " + e.getMessage());\n        }`
+      `$1\n\n        // FIX_RED_FLASH: Set window + WebView background to prevent flash on launch and screen transitions\n        try {\n            int bgColor = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));\n            getWindow().getDecorView().setBackgroundColor(bgColor);\n            // Set WebView background so SPA navigation transitions don't expose system color\n            if (appView != null && appView.getView() != null) {\n                appView.getView().setBackgroundColor(bgColor);\n            }\n        } catch (Exception e) {\n            android.util.Log.e("FixRedFlash", "Failed to set background: " + e.getMessage());\n        }`
     );
     
     fs.writeFileSync(mainActivityPath, content, 'utf8');

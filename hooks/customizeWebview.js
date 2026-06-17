@@ -125,34 +125,32 @@ module.exports = function(context) {
   const platforms = context.opts.platforms;
   const root = context.opts.projectRoot;
   const config = getConfigParser(context, path.join(root, 'config.xml'));
-  
-  // Read the background color from config.
-  let backgroundColor = config.getPreference('WEBVIEW_BACKGROUND_COLOR');
-  
-  if (!backgroundColor) {
-    console.log('\n📱 WEBVIEW_BACKGROUND_COLOR not configured, skipping customization');
-    return;
-  }
-  
-  // Validate color format
-  if (!validateHexColor(backgroundColor)) {
-    console.error('\n❌ Invalid WEBVIEW_BACKGROUND_COLOR format. Use hex color (e.g., #FFFFFF or #FFFFFFFF)');
-    return;
-  }
-  
-  // Ensure # prefix
-  if (!backgroundColor.startsWith('#')) {
-    backgroundColor = '#' + backgroundColor;
-  }
-  
+
   console.log('\n══════════════════════════════════════════════');
   console.log('  CUSTOMIZE WEBVIEW BACKGROUND COLOR         ');
   console.log('══════════════════════════════════════════════');
-  console.log(`Color: ${backgroundColor}`);
-  
+
   for (const platform of platforms) {
-    console.log(`\n📱 Processing ${platform}...`);
-    
+    // Read pref per-platform (config.xml puts WEBVIEW_BACKGROUND_COLOR inside <platform>)
+    let backgroundColor = config.getPreference('WEBVIEW_BACKGROUND_COLOR', platform) ||
+                          config.getPreference('WEBVIEW_BACKGROUND_COLOR');
+
+    if (!backgroundColor) {
+      console.log(`\n📱 ${platform}: WEBVIEW_BACKGROUND_COLOR not configured, skipping`);
+      continue;
+    }
+
+    if (!validateHexColor(backgroundColor)) {
+      console.error(`\n❌ ${platform}: Invalid WEBVIEW_BACKGROUND_COLOR format. Use hex (e.g., #FFFFFF)`);
+      continue;
+    }
+
+    if (!backgroundColor.startsWith('#')) {
+      backgroundColor = '#' + backgroundColor;
+    }
+
+    console.log(`\n📱 Processing ${platform}... color=${backgroundColor}`);
+
     try {
       if (platform === 'android') {
         customizeAndroidWebview(context, backgroundColor);

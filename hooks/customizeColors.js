@@ -323,58 +323,52 @@ module.exports = function(context) {
   const root = context.opts.projectRoot;
   
   const config = getConfigParser(context, path.join(root, 'config.xml'));
-  
-  // Get native background preferences. BackgroundColor is the canonical
-  // OutSystems value; WEBVIEW_BACKGROUND_COLOR is handled separately below.
-  let splashColor = config.getPreference('BackgroundColor') ||
-                    config.getPreference('SplashScreenBackgroundColor') ||
-                    config.getPreference('AndroidWindowSplashScreenBackground') ||
-                    config.getPreference('AndroidWindowSplashScreenBackgroundColor') ||
-                    config.getPreference('SPLASH_BACKGROUND_COLOR');
-                    
-  let webviewColor = config.getPreference('WEBVIEW_BACKGROUND_COLOR') ||
-                     config.getPreference('WebviewBackgroundColor');
-  
-  // Validate colors
-  if (splashColor && !validateHexColor(splashColor)) {
-    console.error('\n❌ Invalid splash color format. Use hex color (e.g., #FFFFFF)');
-    return;
-  }
-  
-  if (webviewColor && !validateHexColor(webviewColor)) {
-    console.error('\n❌ Invalid webview color format. Use hex color (e.g., #FFFFFF)');
-    return;
-  }
-  
-  // Normalize colors
-  if (splashColor) {
-    splashColor = normalizeHexColor(splashColor);
-  }
-  if (webviewColor) {
-    webviewColor = normalizeHexColor(webviewColor);
-  }
-  
-  // Skip if no colors configured
-  if (!splashColor && !webviewColor) {
-    console.log('\n🎨 No custom colors configured, skipping');
-    return;
-  }
+
+  // Helper: read a preference list, preferring the given platform.
+  const readPref = (names, platform) => {
+    for (const n of names) {
+      const v = config.getPreference(n, platform) || config.getPreference(n);
+      if (v) return v;
+    }
+    return undefined;
+  };
+
+  const SPLASH_NAMES = [
+    'BackgroundColor',
+    'SplashScreenBackgroundColor',
+    'AndroidWindowSplashScreenBackground',
+    'AndroidWindowSplashScreenBackgroundColor',
+    'SPLASH_BACKGROUND_COLOR'
+  ];
+  const WEBVIEW_NAMES = ['WEBVIEW_BACKGROUND_COLOR', 'WebviewBackgroundColor'];
   
   console.log('\n══════════════════════════════════════════════');
   console.log('  🎨 CUSTOMIZE COLORS (Named Colors Only)');
   console.log('══════════════════════════════════════════════');
-  console.log('⚠️  ONLY replaces named splash colors');
-  console.log('⚠️  Includes Cordova cdv_* color names');
-  console.log('⚠️  Supports new Cordova template files (cdv_*.xml)');
-  console.log('⚠️  Does NOT replace by hex value');
-  console.log('⚠️  Status bar and other colors preserved');
-  
-  if (splashColor) console.log(`Splash: ${splashColor}`);
-  if (webviewColor) console.log(`Webview: ${webviewColor}`);
-  
+
   for (const platform of platforms) {
-    console.log(`\n📱 ${platform}...`);
-    
+    // Read per-platform (config.xml puts these inside <platform>)
+    let splashColor = readPref(SPLASH_NAMES, platform);
+    let webviewColor = readPref(WEBVIEW_NAMES, platform);
+
+    if (splashColor && !validateHexColor(splashColor)) {
+      console.error(`\n❌ ${platform}: invalid splash color, skipping`);
+      splashColor = undefined;
+    }
+    if (webviewColor && !validateHexColor(webviewColor)) {
+      console.error(`\n❌ ${platform}: invalid webview color, skipping`);
+      webviewColor = undefined;
+    }
+    if (splashColor) splashColor = normalizeHexColor(splashColor);
+    if (webviewColor) webviewColor = normalizeHexColor(webviewColor);
+
+    if (!splashColor && !webviewColor) {
+      console.log(`\n📱 ${platform}: no colors configured, skipping`);
+      continue;
+    }
+
+    console.log(`\n📱 ${platform}... splash=${splashColor || '-'} webview=${webviewColor || '-'}`);
+
     try {
       if (platform === 'android') {
         customizeAndroidColors(root, splashColor, webviewColor);
