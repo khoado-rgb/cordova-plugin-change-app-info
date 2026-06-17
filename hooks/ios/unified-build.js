@@ -93,17 +93,6 @@ async function finalColorOverride(context, iosPath) {
     
     console.log(`   ℹ️  Splash color: ${splashBg}`);
     console.log('   ✅ Color preferences applied in earlier phases');
-    
-    // Try to call original finalColorOverride if needed
-    try {
-      const originalHook = require('../finalColorOverride.js');
-      if (typeof originalHook === 'function') {
-        await originalHook(context);
-      }
-    } catch (error) {
-      // Ignore if original hook doesn't exist
-    }
-    
   } catch (error) {
     console.log('   ⚠️  Color override check skipped:', error.message);
   }
