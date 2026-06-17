@@ -272,19 +272,20 @@ function injectMainActivityBackground(mainActivityPath, backgroundColor) {
   console.log(`   📄 Reading MainActivity from: ${mainActivityPath}`);
   let content = fs.readFileSync(mainActivityPath, 'utf8');
 
-  // Idempotency: skip only when the *current* patch (incl. WebView) is present.
-  // Older patches set just the window background — strip them so we can re-inject
-  // the upgraded version that also sets WebView background.
-  const hasNewPatch = content.includes('FIX_RED_FLASH') && content.includes('appView.getView().setBackgroundColor');
-  if (hasNewPatch) {
+  // Current patch version marker. Bump when injected block changes so older
+  // patched files get re-injected with the latest code.
+  const PATCH_VERSION = 'v2';
+  const versionMarker = `// FIX_RED_FLASH ${PATCH_VERSION}`;
+  if (content.includes(versionMarker)) {
     console.log('   ✓ MainActivity already patched (current version)');
     console.log(`   📍 MainActivity path: ${mainActivityPath}`);
     return true;
   }
+  // Strip any previous FIX_RED_FLASH blocks (pre-super and post-super) for upgrade.
   if (content.includes('// FIX_RED_FLASH')) {
-    console.log('   ♻️  Stripping older FIX_RED_FLASH block for upgrade...');
+    console.log('   ♻️  Stripping older FIX_RED_FLASH blocks for upgrade...');
     content = content.replace(
-      /\n\s*\/\/ FIX_RED_FLASH[\s\S]*?android\.util\.Log\.e\("FixRedFlash"[\s\S]*?\}\s*\n/,
+      /\n\s*\/\/ FIX_RED_FLASH[\s\S]*?\}\s*catch\s*\(Exception[^)]*\)\s*\{[\s\S]*?\}\s*\n/g,
       '\n'
     );
   }
@@ -315,14 +316,29 @@ function injectMainActivityBackground(mainActivityPath, backgroundColor) {
     }
   }
   
-  // Find onCreate and inject background color
-  const onCreateRegex = /(@Override\s+public void onCreate\(Bundle savedInstanceState\)\s*\{[^}]*super\.onCreate\(savedInstanceState\);)/;
-  
-  if (onCreateRegex.test(content)) {
-    console.log('   🎯 Found onCreate method, injecting background color...');
+  // Inject TWO blocks:
+  //   (1) Pre-super.onCreate — set window background immediately so the first
+  //       frame is the splash color even if the manifest theme is transparent.
+  //   (2) Post-super.onCreate — also lock WebView bg so SPA transitions don't
+  //       expose the system/wallpaper color.
+  const preSuperRegex = /(public void onCreate\(Bundle savedInstanceState\)\s*\{)(\s*super\.onCreate\(savedInstanceState\);)/;
+  const postSuperRegex = /(public void onCreate\(Bundle savedInstanceState\)\s*\{[\s\S]*?super\.onCreate\(savedInstanceState\);)/;
+
+  if (preSuperRegex.test(content)) {
+    console.log('   🎯 Found onCreate, injecting pre-super background...');
     content = content.replace(
-      onCreateRegex,
-      `$1\n\n        // FIX_RED_FLASH: Set window + WebView background to prevent flash on launch and screen transitions\n        try {\n            int bgColor = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));\n            getWindow().getDecorView().setBackgroundColor(bgColor);\n            // Set WebView background so SPA navigation transitions don't expose system color\n            if (appView != null && appView.getView() != null) {\n                appView.getView().setBackgroundColor(bgColor);\n            }\n        } catch (Exception e) {\n            android.util.Log.e("FixRedFlash", "Failed to set background: " + e.getMessage());\n        }`
+      preSuperRegex,
+      `$1\n        // FIX_RED_FLASH v2 (pre-super): lock window bg before DecorView attaches\n        try {\n            int __frfBg = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(__frfBg));\n        } catch (Exception __frfEx) {\n            android.util.Log.e("FixRedFlash", "pre-super: " + __frfEx.getMessage());\n        }$2`
+    );
+  } else {
+    console.log('   ⚠️  Could not match pre-super.onCreate pattern');
+  }
+
+  if (postSuperRegex.test(content)) {
+    console.log('   🎯 Found onCreate, injecting post-super background...');
+    content = content.replace(
+      postSuperRegex,
+      `$1\n\n        // FIX_RED_FLASH v2 (post-super): re-assert bg on decor + WebView for SPA navigation\n        try {\n            int bgColor = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));\n            getWindow().getDecorView().setBackgroundColor(bgColor);\n            if (appView != null && appView.getView() != null) {\n                appView.getView().setBackgroundColor(bgColor);\n            }\n        } catch (Exception e) {\n            android.util.Log.e("FixRedFlash", "post-super: " + e.getMessage());\n        }`
     );
     
     fs.writeFileSync(mainActivityPath, content, 'utf8');
@@ -556,10 +572,95 @@ function fixRedFlash(context) {
     'platforms/android/app/src/main/AndroidManifest.xml'
   );
   updateManifestBackground(manifestPath, backgroundColor);
-  
+
+  // 5. Neutralize TransparentTheme so MainActivity launches non-translucent
+  console.log('\n🎭 Step 5: Override transparent activity theme');
+  writeSplashThemeOverride(root, backgroundColor);
+  patchMainActivityManifestTheme(manifestPath);
+
   console.log('\n══════════════════════════════════════════════');
   console.log('✅ Red flash fix completed!');
   console.log('══════════════════════════════════════════════\n');
+}
+
+/**
+ * Write app-level style override that gives MainActivity a solid, non-translucent
+ * window background. We attach it via the manifest (see patchMainActivityManifestTheme)
+ * rather than redefining TransparentTheme, so other activities that legitimately
+ * rely on transparency are unaffected.
+ */
+function writeSplashThemeOverride(root, backgroundColor) {
+  const valuesDir = path.join(root, 'platforms/android/app/src/main/res/values');
+  if (!fs.existsSync(valuesDir)) {
+    console.log('   ⚠️  values/ directory not found, skipping theme override');
+    return false;
+  }
+
+  // If cordova_splash_background already exists in another file, drop it first
+  // to avoid "Duplicate resources" build failure.
+  for (const filePath of getValuesXmlFiles(root)) {
+    if (path.basename(filePath) === 'cdv_red_flash_theme.xml') continue;
+    const c = fs.readFileSync(filePath, 'utf8');
+    if (hasColorResource(c, 'cordova_splash_background')) {
+      const stripped = removeColorResource(c, 'cordova_splash_background');
+      if (stripped !== c) {
+        fs.writeFileSync(filePath, stripped, 'utf8');
+        console.log(`   ♻️  Removed duplicate cordova_splash_background from ${path.basename(filePath)}`);
+      }
+    }
+  }
+
+  const themePath = path.join(valuesDir, 'cdv_red_flash_theme.xml');
+  const xml = `<?xml version="1.0" encoding="utf-8"?>\n<!-- Generated by cordova-plugin-change-app-info / fix-red-flash. Do not edit. -->\n<resources>\n    <color name="cordova_splash_background">${backgroundColor}</color>\n    <style name="CordovaSplashTheme" parent="Theme.AppCompat.NoActionBar">\n        <item name="android:windowBackground">@color/cordova_splash_background</item>\n        <item name="android:colorBackground">@color/cordova_splash_background</item>\n        <item name="android:windowIsTranslucent">false</item>\n        <item name="android:windowNoTitle">true</item>\n        <item name="android:windowActionBar">false</item>\n        <item name="android:windowDisablePreview">false</item>\n    </style>\n</resources>\n`;
+  fs.writeFileSync(themePath, xml, 'utf8');
+  console.log(`   ✅ Wrote ${path.basename(themePath)} with bg=${backgroundColor}`);
+  return true;
+}
+
+/**
+ * Patch <activity ...MainActivity...> in AndroidManifest.xml so it uses our
+ * non-translucent splash theme instead of TransparentTheme. Other activities
+ * (which may rely on transparency) are not touched.
+ */
+function patchMainActivityManifestTheme(manifestPath) {
+  if (!fs.existsSync(manifestPath)) {
+    console.log('   ⚠️  AndroidManifest.xml not found');
+    return false;
+  }
+
+  let content = fs.readFileSync(manifestPath, 'utf8');
+  const TARGET_THEME = '@style/CordovaSplashTheme';
+
+  // Match the MainActivity tag (single-line or multi-line, self-closing or not).
+  const activityRegex = /<activity\b([^>]*?\bandroid:name="[^"]*MainActivity"[^>]*?)(\/?)>/;
+  const match = content.match(activityRegex);
+
+  if (!match) {
+    console.log('   ⚠️  MainActivity <activity> tag not found in manifest');
+    return false;
+  }
+
+  const attrs = match[1];
+  const selfClose = match[2];
+
+  if (attrs.includes(`android:theme="${TARGET_THEME}"`)) {
+    console.log('   ✓ MainActivity already uses CordovaSplashTheme');
+    return true;
+  }
+
+  let newAttrs;
+  if (/\bandroid:theme="[^"]*"/.test(attrs)) {
+    newAttrs = attrs.replace(/\bandroid:theme="[^"]*"/, `android:theme="${TARGET_THEME}"`);
+    console.log(`   🔁 Replaced MainActivity theme → ${TARGET_THEME}`);
+  } else {
+    newAttrs = attrs.replace(/(\bandroid:name="[^"]*MainActivity")/, `$1 android:theme="${TARGET_THEME}"`);
+    console.log(`   ➕ Added MainActivity theme → ${TARGET_THEME}`);
+  }
+
+  content = content.replace(activityRegex, `<activity${newAttrs}${selfClose}>`);
+  fs.writeFileSync(manifestPath, content, 'utf8');
+  console.log('   ✅ AndroidManifest.xml patched');
+  return true;
 }
 
 module.exports = function(context) {
