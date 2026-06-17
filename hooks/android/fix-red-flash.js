@@ -644,6 +644,24 @@ function writeSplashThemeOverride(root, backgroundColor) {
     }
   }
 
+  // Same dedupe for Theme.App.SplashScreen — cordova-android / splashscreen
+  // plugin already declares it in themes.xml; we must own the only copy or
+  // mergeDebugResources fails with "Duplicate resources".
+  const splashStyleRegex = /[ \t]*<style\s+name=["']Theme\.App\.SplashScreen["'][\s\S]*?<\/style>\s*\n?/g;
+  for (const filePath of getValuesXmlFiles(root)) {
+    if (path.basename(filePath) === 'cdv_red_flash_theme.xml') continue;
+    const c = fs.readFileSync(filePath, 'utf8');
+    if (splashStyleRegex.test(c)) {
+      splashStyleRegex.lastIndex = 0;
+      const stripped = c.replace(splashStyleRegex, '');
+      if (stripped !== c) {
+        fs.writeFileSync(filePath, stripped, 'utf8');
+        console.log(`   ♻️  Removed duplicate Theme.App.SplashScreen from ${path.basename(filePath)}`);
+      }
+    }
+    splashStyleRegex.lastIndex = 0;
+  }
+
   // Drop a 1x1 transparent PNG to use as splash animated icon. Avoids
   // ic_cdv_splashscreen.xml whose fillColor is a Material You dynamic system
   // color that resolves to red on some Pixel emulators (Android 12+).
