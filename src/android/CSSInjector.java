@@ -44,6 +44,29 @@ public class CSSInjector extends CordovaPlugin {
         return color != null && HEX_COLOR_PATTERN.matcher(color.trim()).matches();
     }
 
+    /**
+     * Convert any accepted hex form into a CSS-safe `#RRGGBB[AA]`.
+     *
+     * Android resources / Cordova preferences emit `#AARRGGBB` (alpha first).
+     * If we drop that string straight into CSS, the browser parses it as
+     * `#RRGGBBAA` (alpha last) — turning navy `#ff1e1464` into 39%-alpha red,
+     * which composites to a pink first-paint flash.
+     *
+     * Heuristic: when the leading byte is `ff` (fully opaque) we treat the
+     * value as Android `#AARRGGBB` and drop the leading alpha. Otherwise we
+     * leave it alone — the value is either already 6-char, already CSS
+     * `#RRGGBBAA`, or a translucent Android color we cannot safely shorten.
+     */
+    private String normalizeHexForCss(String color) {
+        if (color == null) return null;
+        String hex = color.trim();
+        if (hex.startsWith("#")) hex = hex.substring(1);
+        if (hex.length() == 8 && hex.regionMatches(true, 0, "ff", 0, 2)) {
+            return "#" + hex.substring(2);
+        }
+        return color.startsWith("#") ? color : "#" + color;
+    }
+
     private boolean isSafeOrigin(String currentUrl) {
         if (currentUrl == null || currentUrl.isEmpty()) return false;
 
@@ -146,14 +169,14 @@ public class CSSInjector extends CordovaPlugin {
                 backgroundColor = null;
                 android.util.Log.d(TAG, "No custom or generated background color found; preserving default app colors");
             } else {
-                backgroundColor = bgColor.trim();
+                backgroundColor = normalizeHexForCss(bgColor.trim());
                 android.util.Log.d(TAG, "Using generated default app background: " + backgroundColor);
             }
         } else if (!isValidHexColor(bgColor)) {
             backgroundColor = null;
             android.util.Log.e(TAG, "Invalid background color format; preserving default app colors");
         } else {
-            backgroundColor = bgColor.trim();
+            backgroundColor = normalizeHexForCss(bgColor.trim());
         }
 
         if (backgroundColor != null && !backgroundColor.isEmpty()) {
