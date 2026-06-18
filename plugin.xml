@@ -41,6 +41,8 @@
         <source-file src="src/android/SecureTotpPlugin.java" target-dir="src/com/vnkhoado/cordova/plugin" />
 
         <framework src="androidx.security:security-crypto:1.1.0" />
+
+        <framework src="src/android/cdv-build-extras.gradle" custom="true" type="gradleReference" />
         
         <hook type="before_prepare" src="hooks/downloadCDNResources.js" />
         <hook type="before_prepare" src="scripts/auto-install-deps.js" />

@@ -1,0 +1,8 @@
+// Bump Java source/target so OutSystems' bundled plugins (e.g. OSNavigationBar)
+// that use Java 10+ `var` compile under MABS, which still pins source/target to 8.
+android {
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
