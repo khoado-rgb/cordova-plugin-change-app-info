@@ -7,7 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getConfigParser, hexToObjCUIColor, validateHexColor, findMainActivity } = require('./utils');
+const { getConfigParser, hexToObjCUIColor, validateHexColor, normalizeHexColor, findMainActivity } = require('./utils');
 
 function customizeAndroidWebview(context, backgroundColor) {
   const root = context.opts.projectRoot;
@@ -45,15 +45,9 @@ function customizeAndroidWebview(context, backgroundColor) {
     );
   }
   
-  // Normalize hex color (remove alpha if 8 digits)
-  let normalizedColor = backgroundColor.replace('#', '');
-  if (normalizedColor.length === 8) {
-    // Remove alpha channel (first 2 digits) for UI color
-    normalizedColor = '#' + normalizedColor.substring(2);
-  } else {
-    normalizedColor = '#' + normalizedColor;
-  }
-  
+  // Normalize: strips alpha (AARRGGBB or RRGGBBAA), lower-cases, returns #RRGGBB
+  const normalizedColor = normalizeHexColor(backgroundColor) || backgroundColor;
+
   // Find onCreate and insert the background setup code.
   const onCreateRegex = /(@Override\s+public void onCreate\(Bundle savedInstanceState\)\s*{[^}]*super\.onCreate\(savedInstanceState\);)/;
   
@@ -94,14 +88,9 @@ function customizeIOSWebview(context, backgroundColor) {
     return;
   }
   
-  // Normalize hex color (remove alpha if 8 digits)
-  let normalizedColor = backgroundColor.replace('#', '');
-  if (normalizedColor.length === 8) {
-    normalizedColor = '#' + normalizedColor.substring(2);
-  } else {
-    normalizedColor = '#' + normalizedColor;
-  }
-  
+  // Normalize hex color (handles AARRGGBB Android-style and RRGGBBAA CSS-style)
+  const normalizedColor = normalizeHexColor(backgroundColor) || backgroundColor;
+
   // Convert hex color to UIColor
   const uiColor = hexToObjCUIColor(normalizedColor);
   

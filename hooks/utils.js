@@ -329,21 +329,34 @@ function validateHexColor(color) {
  */
 function normalizeHexColor(color) {
   if (!color) return null;
-  
-  // Remove # if present
-  let hex = color.replace(/^#/, '');
-  
-  // Remove alpha channel if present (last 2 chars if 8 chars long)
+
+  let hex = color.replace(/^#/, '').toLowerCase();
+
+  if (!/^[0-9a-f]+$/.test(hex)) return null;
+
+  // 3-char shorthand #RGB → #RRGGBB
+  if (hex.length === 3) {
+    hex = hex.split('').map(c => c + c).join('');
+  }
+
+  // 8-char with alpha: handle BOTH conventions.
+  //  - Android / native: #AARRGGBB (alpha first)  → e.g. #ff1e1464
+  //  - CSS / web:        #RRGGBBAA (alpha last)   → e.g. #1e1464ff
+  // When alpha is opaque (ff), drop it. When it's non-opaque, keep all 8 chars.
   if (hex.length === 8) {
-    hex = hex.substring(0, 6);
+    if (hex.startsWith('ff')) {
+      hex = hex.substring(2);          // strip AA prefix
+    } else if (hex.endsWith('ff')) {
+      hex = hex.substring(0, 6);       // strip AA suffix
+    } else {
+      // Non-opaque alpha: preserve as-is, Android-style (#AARRGGBB).
+      return '#' + hex;
+    }
   }
-  
-  // Ensure 6 characters
-  if (hex.length !== 6) {
-    return null;
-  }
-  
-  return '#' + hex.toLowerCase();
+
+  if (hex.length !== 6) return null;
+
+  return '#' + hex;
 }
 
 /**
