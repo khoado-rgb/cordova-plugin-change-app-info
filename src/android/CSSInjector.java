@@ -389,7 +389,10 @@ public class CSSInjector extends CordovaPlugin {
                     } catch (Exception ignored) {}
                 }
 
-                String css = "html,body,#root,#app,.app-container,.screen,.page-wrapper,.splash-screen,.login-screen{" +
+                // Only paint bare html/body. Do NOT target OutSystems'
+                // own .splash-screen / .login-screen classes — those are
+                // owned by the remote app and must keep their styling.
+                String css = "html,body{" +
                     "background-color:" + bgColor + " !important;" +
                     "background:" + bgColor + " !important;" +
                     "margin:0;padding:0;" +
@@ -581,10 +584,12 @@ public class CSSInjector extends CordovaPlugin {
                 
                 CordovaWebView cordovaWebView = this.webView;
                 if (cordovaWebView != null) {
-                    // Include OutSystems splash/login class names — these
-                    // are what produces the red first-paint flash on remote
-                    // OutSystems apps before the bundled CSS finishes loading.
-                    String css = "html, body, #root, #app, .app-container, .screen, .page-wrapper, .splash-screen, .login-screen { " +
+                    // Only paint background on bare html/body so the gap
+                    // between the native splash and the first OutSystems
+                    // React render does not flash red. Do NOT target
+                    // .splash-screen / .login-screen — those are owned by
+                    // OutSystems and have their own intentional colors.
+                    String css = "html, body { " +
                         "background-color: " + bgColor + " !important; " +
                         "background: " + bgColor + " !important; " +
                         "margin: 0; padding: 0; " +
