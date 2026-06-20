@@ -24,7 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v5';
+const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v6';
 
 const CONTENT = `${MARKER}
 // Raise Java source/target so OutSystems-bundled plugins that use Java 10+
@@ -111,50 +111,67 @@ afterEvaluate { project ->
         //       > Cannot query the value of this property because it has no value available.
         // Fall back to ~/.android/debug.keystore (AGP convention) — auto-create
         // it with keytool when missing (clean MABS worker may not have one).
+        // On MABS, the debug signingConfig is already wired up by the build
+        // worker (see "Reading the keystore from: .../keys/android.keystore"
+        // in the build log). The problem is the RELEASE buildType — when a
+        // debug-only MABS build is requested, the release variant ends up
+        // with signingConfig=null. AGP 8.x with --parallel then leaks an
+        // unresolved Property query from release into the :app:packageDebug
+        // task-graph assembly, producing:
+        //   Could not determine the dependencies of task ':app:packageDebug'.
+        //   > Cannot query the value of this property because it has no value available.
+        //
+        // Give the release buildType a fallback signingConfig (copy of debug)
+        // so every variant's signing Property resolves. Release isn't built
+        // on debug-only MABS runs, but its task graph still has to configure.
         try {
             def debugCfg = project.android.signingConfigs.findByName('debug')
-            def currentStore = null
-            try { currentStore = debugCfg?.storeFile } catch (Throwable ignored2) {}
-            logger.lifecycle("CDV-DIAG: signingConfigs.debug=\${debugCfg != null}, storeFile=\${currentStore}, exists=\${currentStore?.exists()}")
+            def debugStore = null
+            try { debugStore = debugCfg?.storeFile } catch (Throwable ignored2) {}
+            logger.lifecycle("CDV-DIAG: debug signingConfig storeFile=\${debugStore} exists=\${debugStore?.exists()}")
 
-            def home = System.getProperty('user.home')
-            def ksFile = (currentStore != null) ? currentStore : new File(home, '.android/debug.keystore')
-
-            if (!ksFile.exists()) {
-                ksFile.parentFile.mkdirs()
-                def keytool = System.getProperty('java.home') + '/bin/keytool'
-                def out = new ByteArrayOutputStream()
-                def err = new ByteArrayOutputStream()
-                def res = project.exec {
-                    commandLine keytool,
-                        '-genkeypair', '-v',
-                        '-keystore', ksFile.absolutePath,
-                        '-storepass', 'android',
-                        '-alias', 'androiddebugkey',
-                        '-keypass', 'android',
-                        '-dname', 'CN=Android Debug,O=Android,C=US',
-                        '-keyalg', 'RSA',
-                        '-keysize', '2048',
-                        '-validity', '10000'
-                    standardOutput = out
-                    errorOutput = err
-                    ignoreExitValue = true
+            // Ensure ~/.android/debug.keystore exists as last-resort fallback
+            // when MABS did not provision any keystore at all.
+            if (debugStore == null || !debugStore.exists()) {
+                def home = System.getProperty('user.home')
+                def ksFile = new File(home, '.android/debug.keystore')
+                if (!ksFile.exists()) {
+                    ksFile.parentFile.mkdirs()
+                    def keytool = System.getProperty('java.home') + '/bin/keytool'
+                    project.exec {
+                        commandLine keytool, '-genkeypair', '-v',
+                            '-keystore', ksFile.absolutePath,
+                            '-storepass', 'android', '-alias', 'androiddebugkey',
+                            '-keypass', 'android',
+                            '-dname', 'CN=Android Debug,O=Android,C=US',
+                            '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000'
+                        standardOutput = new ByteArrayOutputStream()
+                        errorOutput = new ByteArrayOutputStream()
+                        ignoreExitValue = true
+                    }
                 }
-                logger.lifecycle("CDV-DIAG: keytool exit=\${res.exitValue}, ksExists=\${ksFile.exists()}")
-                if (res.exitValue != 0) {
-                    logger.warn("CDV-DIAG: keytool stderr: \${err.toString()}")
+                if (debugCfg != null && ksFile.exists() && debugStore == null) {
+                    debugCfg.storeFile = ksFile
+                    debugCfg.storePassword = 'android'
+                    debugCfg.keyAlias = 'androiddebugkey'
+                    debugCfg.keyPassword = 'android'
+                    debugStore = ksFile
+                    logger.lifecycle("CDV: bound debug signingConfig to \${ksFile.absolutePath}")
                 }
             }
 
-            if (debugCfg != null && ksFile.exists()) {
-                debugCfg.storeFile = ksFile
-                debugCfg.storePassword = 'android'
-                debugCfg.keyAlias = 'androiddebugkey'
-                debugCfg.keyPassword = 'android'
-                logger.lifecycle("CDV: bound debug signingConfig to \${ksFile.absolutePath}")
+            // Give release a fallback signingConfig if MABS did not set one.
+            // Use the new variant API (androidComponents.onVariants) so we do
+            // not trigger the deprecated applicationVariants realization that
+            // would itself force Property queries during configuration.
+            project.android.buildTypes.findByName('release')?.with { rt ->
+                if (rt.signingConfig == null && debugCfg != null && debugStore != null && debugStore.exists()) {
+                    rt.signingConfig = debugCfg
+                    logger.lifecycle("CDV: assigned debug signingConfig as release fallback (debug-only MABS build)")
+                }
             }
         } catch (Throwable t) {
-            logger.warn("CDV: could not bind debug signingConfig: \${t.message}")
+            logger.warn("CDV: signingConfig setup failed: \${t.message}")
         }
 
         // Diagnostic: dump every applicationVariant's signing/applicationId
