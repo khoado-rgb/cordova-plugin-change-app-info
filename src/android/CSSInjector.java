@@ -618,32 +618,7 @@ public class CSSInjector extends CordovaPlugin {
                         "margin: 0; padding: 0; " +
                         "}";
                     
-                    String javascript = "(function() {" +
-                        "  function applyBg() {" +
-                        "    try {" +
-                        "      if (typeof document === 'undefined') return;" +
-                        "      if (document.documentElement) {" +
-                        "        document.documentElement.style.backgroundColor = '" + bgColor + "';" +
-                        "      }" +
-                        "      if (document.body) {" +
-                        "        document.body.style.backgroundColor = '" + bgColor + "';" +
-                        "      }" +
-                        "      var target = document.head || document.getElementsByTagName('head')[0] || document.documentElement;" +
-                        "      if (!target) { setTimeout(applyBg, 16); return; }" +
-                        "      if (!document.getElementById('cordova-bg')) {" +
-                        "        var s = document.createElement('style');" +
-                        "        s.id = 'cordova-bg';" +
-                        "        s.textContent = '" + css.replace("'", "\\'") + "';" +
-                        "        if (target.firstChild) { target.insertBefore(s, target.firstChild); } else { target.appendChild(s); }" +
-                        "        console.log('[Native-BG] CSS injected: " + bgColor + "');" +
-                        "      }" +
-                        "    } catch(e) { console.error('[Native-BG] Failed:', e); }" +
-                        "  }" +
-                        "  applyBg();" +
-                        "  if (document.readyState === 'loading') {" +
-                        "    document.addEventListener('DOMContentLoaded', applyBg);" +
-                        "  }" +
-                        "})();";
+                    String javascript = buildBackgroundGuardScript(bgColor, css);
                     
                     cordovaWebView.loadUrl("javascript:" + javascript);
                 }
@@ -651,6 +626,114 @@ public class CSSInjector extends CordovaPlugin {
                 android.util.Log.e(TAG, "Background CSS failed", e);
             }
         });
+    }
+
+    private String buildBackgroundGuardScript(String bgColor, String css) {
+        String escapedColor = escapeForSingleQuotedJs(bgColor);
+        String escapedCss = escapeForSingleQuotedJs(css);
+
+        return "(function() {" +
+               "  try {" +
+               "    if (typeof window === 'undefined' || typeof document === 'undefined') return;" +
+               "    var bg = '" + escapedColor + "';" +
+               "    var css = '" + escapedCss + "';" +
+               "    var normalizedBg = bg;" +
+               "    try {" +
+               "      var probe = document.createElement('div');" +
+               "      probe.style.backgroundColor = bg;" +
+               "      normalizedBg = probe.style.backgroundColor || bg;" +
+               "    } catch (e) {}" +
+               "    function setBg(el) {" +
+               "      if (!el || !el.style) return;" +
+               "      var current = el.style.backgroundColor || el.style.getPropertyValue('background-color');" +
+               "      var priority = el.style.getPropertyPriority('background-color');" +
+               "      if (priority !== 'important' || (current !== bg && current !== normalizedBg)) {" +
+               "        el.style.setProperty('background-color', bg, 'important');" +
+               "      }" +
+               "    }" +
+               "    function ensureStyle() {" +
+               "      var target = document.head || document.getElementsByTagName('head')[0] || document.documentElement;" +
+               "      if (!target) return false;" +
+               "      var s = document.getElementById('cordova-bg');" +
+               "      if (!s) {" +
+               "        s = document.createElement('style');" +
+               "        s.id = 'cordova-bg';" +
+               "        if (target.firstChild) { target.insertBefore(s, target.firstChild); } else { target.appendChild(s); }" +
+               "      }" +
+               "      if (s.textContent !== css) s.textContent = css;" +
+               "      return true;" +
+               "    }" +
+               "    function applyBg() {" +
+               "      try {" +
+               "        setBg(document.documentElement);" +
+               "        setBg(document.body);" +
+               "        if (!ensureStyle()) setTimeout(applyBg, 16);" +
+               "      } catch (e) { console.error('[Native-BG] Failed:', e); }" +
+               "    }" +
+               "    var previousGuard = window.__cordovaBgGuard;" +
+               "    if (previousGuard && previousGuard.color === bg && previousGuard.observer) {" +
+               "      previousGuard.apply = applyBg;" +
+               "      previousGuard.schedule = scheduleBg;" +
+               "      previousGuard.apply();" +
+               "      return;" +
+               "    }" +
+               "    var scheduled = false;" +
+               "    function scheduleBg() {" +
+               "      if (scheduled) return;" +
+               "      scheduled = true;" +
+               "      var run = function() { scheduled = false; applyBg(); };" +
+               "      if (window.requestAnimationFrame) window.requestAnimationFrame(run); else setTimeout(run, 0);" +
+               "      setTimeout(applyBg, 50);" +
+               "      setTimeout(applyBg, 150);" +
+               "    }" +
+               "    function routeChanged() {" +
+               "      var guard = window.__cordovaBgGuard;" +
+               "      if (guard && typeof guard.schedule === 'function') guard.schedule();" +
+               "    }" +
+               "    function wrapHistory(name) {" +
+               "      try {" +
+               "        var original = window.history && window.history[name];" +
+               "        if (typeof original !== 'function' || original.__cordovaBgWrapped) return;" +
+               "        var wrapped = function() {" +
+               "          var result = original.apply(this, arguments);" +
+               "          routeChanged();" +
+               "          return result;" +
+               "        };" +
+               "        wrapped.__cordovaBgWrapped = true;" +
+               "        window.history[name] = wrapped;" +
+               "      } catch (e) {}" +
+               "    }" +
+               "    if (previousGuard && previousGuard.observer) {" +
+               "      try { previousGuard.observer.disconnect(); } catch (e) {}" +
+               "    }" +
+               "    window.__cordovaBgGuard = { color: bg, apply: applyBg, schedule: scheduleBg, observer: null };" +
+               "    applyBg();" +
+               "    if (!window.__cordovaBgGuardListenersInstalled) {" +
+               "      wrapHistory('pushState');" +
+               "      wrapHistory('replaceState');" +
+               "      window.addEventListener('popstate', routeChanged, true);" +
+               "      window.addEventListener('hashchange', routeChanged, true);" +
+               "      window.addEventListener('pageshow', routeChanged, true);" +
+               "      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', routeChanged, true);" +
+               "      window.__cordovaBgGuardListenersInstalled = true;" +
+               "    }" +
+               "    if (window.MutationObserver && document.documentElement) {" +
+               "      var observer = new MutationObserver(routeChanged);" +
+               "      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });" +
+               "      window.__cordovaBgGuard.observer = observer;" +
+               "    }" +
+               "    console.log('[Native-BG] SPA background guard installed: " + escapedColor + "');" +
+               "  } catch(e) { console.error('[Native-BG] Guard failed:', e); }" +
+               "})();";
+    }
+
+    private String escapeForSingleQuotedJs(String value) {
+        if (value == null) return "";
+        return value
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "");
     }
 
     private void injectCSSIntoWebView() {

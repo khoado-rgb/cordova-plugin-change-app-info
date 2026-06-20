@@ -24,7 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v8';
+const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v9';
 
 const CONTENT = `${MARKER}
 // Raise Java source/target so OutSystems-bundled plugins that use Java 10+
@@ -152,27 +152,16 @@ module.exports = function (context) {
     return;
   }
 
-  let wroteFile = false;
   if (fs.existsSync(targetPath)) {
-    const existing = fs.readFileSync(targetPath, 'utf8');
-    if (existing.includes(MARKER)) {
-      console.log('   ✓ app/build-extras.gradle already at current version');
-    } else {
-      console.log('   ♻️  Overwriting older app/build-extras.gradle');
-      fs.writeFileSync(targetPath, CONTENT, 'utf8');
-      wroteFile = true;
-    }
-  } else {
-    fs.writeFileSync(targetPath, CONTENT, 'utf8');
-    wroteFile = true;
+    console.log('   ♻️  Rewriting app/build-extras.gradle deterministically');
   }
 
-  if (wroteFile) {
-    console.log(`   ✅ Wrote ${targetPath}`);
-    console.log('      → compileOptions = JavaVersion.VERSION_17 (forced via afterEvaluate)');
-    console.log('      → Kotlin/kapt tasks jvmTarget = 17 (forced via afterEvaluate)');
-    console.log('      → variantFilter ignores release variant on debug-only builds');
-  }
+  fs.writeFileSync(targetPath, CONTENT, 'utf8');
+  console.log(`   ✅ Wrote ${targetPath}`);
+  console.log('      → compileOptions = JavaVersion.VERSION_17 (forced via afterEvaluate)');
+  console.log('      → Kotlin/kapt tasks jvmTarget = 17 (forced via afterEvaluate)');
+  console.log('      → variantFilter ignores release variant on debug-only builds');
+  console.log('      → no signingConfig/applicationVariants fallback is applied');
 
   // Append stacktrace logging + disable --parallel to gradle.properties.
   // org.gradle.parallel=false works around an AGP 8.x bug where running
