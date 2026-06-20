@@ -24,7 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v9';
+const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v10';
 
 const CONTENT = `${MARKER}
 // Raise Java source/target so OutSystems-bundled plugins that use Java 10+
@@ -43,20 +43,6 @@ const CONTENT = `${MARKER}
 // causes 'Cannot query the value of this property because it has no value
 // available' during :app:packageDebug dependency resolution on AGP 8.x.
 
-// Detect MABS debug-only invocations (cdvBuildDebug, assembleDebug, etc.)
-// so we can skip the release variant entirely. MABS does not provision a
-// release signingConfig for debug-only builds, leaving the release variant
-// with signing=null. AGP 8.x + --parallel then leaks an unresolved Property
-// query from the unconfigured release variant into :app:packageDebug
-// task-graph assembly, producing:
-//   Could not determine the dependencies of task ':app:packageDebug'.
-//   > Cannot query the value of this property because it has no value available.
-// variantFilter runs during configuration BEFORE variants are realized, so
-// ignored variants never trigger Property resolution.
-def cdvRequestedTasks = (project.gradle.startParameter.taskNames ?: []).collect { it.toLowerCase() }
-def cdvIsDebugOnlyBuild = cdvRequestedTasks.any { it.contains('debug') } &&
-                          !cdvRequestedTasks.any { it.contains('release') }
-
 android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -65,14 +51,6 @@ android {
     if (project.android.hasProperty('kotlinOptions')) {
         kotlinOptions {
             jvmTarget = '17'
-        }
-    }
-    if (cdvIsDebugOnlyBuild) {
-        logger.lifecycle("CDV: debug-only build detected (\${cdvRequestedTasks}) — ignoring release variant")
-        variantFilter { variant ->
-            if (variant.buildType.name == 'release') {
-                variant.setIgnore(true)
-            }
         }
     }
 }
@@ -160,7 +138,7 @@ module.exports = function (context) {
   console.log(`   ✅ Wrote ${targetPath}`);
   console.log('      → compileOptions = JavaVersion.VERSION_17 (forced via afterEvaluate)');
   console.log('      → Kotlin/kapt tasks jvmTarget = 17 (forced via afterEvaluate)');
-  console.log('      → variantFilter ignores release variant on debug-only builds');
+  console.log('      → release variant is left intact (no variantFilter)');
   console.log('      → no signingConfig/applicationVariants fallback is applied');
 
   // Append stacktrace logging + disable --parallel to gradle.properties.
