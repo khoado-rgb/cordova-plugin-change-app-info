@@ -24,7 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v7';
+const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v8';
 
 const CONTENT = `${MARKER}
 // Raise Java source/target so OutSystems-bundled plugins that use Java 10+
@@ -112,6 +112,15 @@ project.plugins.withId('org.jetbrains.kotlin.android') {
 
 // Re-assert compileOptions inside afterEvaluate so any MABS template
 // configuration callback that mutates compileOptions later cannot stomp it.
+//
+// We deliberately DO NOT touch signingConfig, applicationVariants, or any
+// lazy Provider here — earlier versions (v5-v7) called
+// project.android.applicationVariants.all { v -> v.signingConfig } and
+// project.android.buildTypes.findByName('release').signingConfig = ... ,
+// both of which forced premature materialization of AGP 8.x lazy
+// Properties on the debug variant and caused:
+//   Could not determine the dependencies of task ':app:packageDebug'.
+//   > Cannot query the value of this property because it has no value available.
 afterEvaluate { project ->
     if (project.extensions.findByName('android') != null) {
         project.android.compileOptions {
@@ -123,92 +132,6 @@ afterEvaluate { project ->
         } catch (Throwable ignored) {
             // kotlinOptions not exposed on this AGP/Kotlin combo — already
             // covered by the plugins.withId block above.
-        }
-
-        // Ensure the debug signingConfig has a usable storeFile. On MABS +
-        // cordova-android 14, the build worker only provisions the release
-        // keystore; the debug signingConfig is left with a null storeFile
-        // Property, so 'cdvBuildDebug' fails during dependency resolution
-        // with: Could not determine the dependencies of task ':app:packageDebug'.
-        //       > Cannot query the value of this property because it has no value available.
-        // Fall back to ~/.android/debug.keystore (AGP convention) — auto-create
-        // it with keytool when missing (clean MABS worker may not have one).
-        // On MABS, the debug signingConfig is already wired up by the build
-        // worker (see "Reading the keystore from: .../keys/android.keystore"
-        // in the build log). The problem is the RELEASE buildType — when a
-        // debug-only MABS build is requested, the release variant ends up
-        // with signingConfig=null. AGP 8.x with --parallel then leaks an
-        // unresolved Property query from release into the :app:packageDebug
-        // task-graph assembly, producing:
-        //   Could not determine the dependencies of task ':app:packageDebug'.
-        //   > Cannot query the value of this property because it has no value available.
-        //
-        // Give the release buildType a fallback signingConfig (copy of debug)
-        // so every variant's signing Property resolves. Release isn't built
-        // on debug-only MABS runs, but its task graph still has to configure.
-        try {
-            def debugCfg = project.android.signingConfigs.findByName('debug')
-            def debugStore = null
-            try { debugStore = debugCfg?.storeFile } catch (Throwable ignored2) {}
-            logger.lifecycle("CDV-DIAG: debug signingConfig storeFile=\${debugStore} exists=\${debugStore?.exists()}")
-
-            // Ensure ~/.android/debug.keystore exists as last-resort fallback
-            // when MABS did not provision any keystore at all.
-            if (debugStore == null || !debugStore.exists()) {
-                def home = System.getProperty('user.home')
-                def ksFile = new File(home, '.android/debug.keystore')
-                if (!ksFile.exists()) {
-                    ksFile.parentFile.mkdirs()
-                    def keytool = System.getProperty('java.home') + '/bin/keytool'
-                    project.exec {
-                        commandLine keytool, '-genkeypair', '-v',
-                            '-keystore', ksFile.absolutePath,
-                            '-storepass', 'android', '-alias', 'androiddebugkey',
-                            '-keypass', 'android',
-                            '-dname', 'CN=Android Debug,O=Android,C=US',
-                            '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000'
-                        standardOutput = new ByteArrayOutputStream()
-                        errorOutput = new ByteArrayOutputStream()
-                        ignoreExitValue = true
-                    }
-                }
-                if (debugCfg != null && ksFile.exists() && debugStore == null) {
-                    debugCfg.storeFile = ksFile
-                    debugCfg.storePassword = 'android'
-                    debugCfg.keyAlias = 'androiddebugkey'
-                    debugCfg.keyPassword = 'android'
-                    debugStore = ksFile
-                    logger.lifecycle("CDV: bound debug signingConfig to \${ksFile.absolutePath}")
-                }
-            }
-
-            // Give release a fallback signingConfig if MABS did not set one.
-            // Use the new variant API (androidComponents.onVariants) so we do
-            // not trigger the deprecated applicationVariants realization that
-            // would itself force Property queries during configuration.
-            project.android.buildTypes.findByName('release')?.with { rt ->
-                if (rt.signingConfig == null && debugCfg != null && debugStore != null && debugStore.exists()) {
-                    rt.signingConfig = debugCfg
-                    logger.lifecycle("CDV: assigned debug signingConfig as release fallback (debug-only MABS build)")
-                }
-            }
-        } catch (Throwable t) {
-            logger.warn("CDV: signingConfig setup failed: \${t.message}")
-        }
-
-        // Diagnostic: dump every applicationVariant's signing/applicationId
-        // state. Helps locate which AGP Property is still null when the next
-        // 'Cannot query the value of this property' error reproduces.
-        try {
-            project.android.applicationVariants.all { v ->
-                def sc = null
-                try { sc = v.signingConfig } catch (Throwable ignored3) {}
-                def sf = null
-                try { sf = sc?.storeFile } catch (Throwable ignored4) {}
-                logger.lifecycle("CDV-DIAG: variant=\${v.name} buildType=\${v.buildType.name} signing=\${sc?.name} storeFile=\${sf} exists=\${sf?.exists()}")
-            }
-        } catch (Throwable t) {
-            logger.warn("CDV-DIAG: variant introspection failed: \${t.message}")
         }
     }
 }
@@ -248,17 +171,23 @@ module.exports = function (context) {
     console.log(`   ✅ Wrote ${targetPath}`);
     console.log('      → compileOptions = JavaVersion.VERSION_17 (forced via afterEvaluate)');
     console.log('      → Kotlin/kapt tasks jvmTarget = 17 (forced via afterEvaluate)');
-    console.log('      → debug signingConfig fallback to ~/.android/debug.keystore');
+    console.log('      → variantFilter ignores release variant on debug-only builds');
   }
 
-  // Append stacktrace logging to gradle.properties so any future Gradle
-  // failure (e.g. "Cannot query the value of this property because it has no
-  // value available") prints the exact property class and source location.
-  // Without this, MABS' gradle invocation gives no stacktrace and the root
-  // cause cannot be determined from the build log alone.
+  // Append stacktrace logging + disable --parallel to gradle.properties.
+  // org.gradle.parallel=false works around an AGP 8.x bug where running
+  // `gradlew --parallel cdvBuildDebug` leaks an unresolved lazy Provider
+  // query from a concurrently configured task into :app:packageDebug's
+  // dependency resolution, producing:
+  //   Could not determine the dependencies of task ':app:packageDebug'.
+  //   > Cannot query the value of this property because it has no value available.
+  // The Gradle daemon's --parallel CLI flag overrides gradle.properties, so
+  // we cannot disable parallelism just from the properties file; instead
+  // also disable per-project task parallelism via
+  // org.gradle.workers.max=1 which AGP respects even with --parallel.
   const propsPath = path.join(androidDir, 'gradle.properties');
   const STACKTRACE_MARKER = '# CHANGE_APP_INFO_DIAG';
-  const STACKTRACE_BLOCK = `\n${STACKTRACE_MARKER}\norg.gradle.logging.stacktrace=full\n`;
+  const STACKTRACE_BLOCK = `\n${STACKTRACE_MARKER}\norg.gradle.logging.stacktrace=full\norg.gradle.parallel=false\norg.gradle.workers.max=1\n`;
   try {
     let propsContent = fs.existsSync(propsPath) ? fs.readFileSync(propsPath, 'utf8') : '';
     if (!propsContent.includes(STACKTRACE_MARKER)) {
