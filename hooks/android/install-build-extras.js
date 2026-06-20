@@ -24,7 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v4';
+const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v5';
 
 const CONTENT = `${MARKER}
 // Raise Java source/target so OutSystems-bundled plugins that use Java 10+
@@ -113,42 +113,63 @@ afterEvaluate { project ->
         // it with keytool when missing (clean MABS worker may not have one).
         try {
             def debugCfg = project.android.signingConfigs.findByName('debug')
-            if (debugCfg != null) {
-                def hasStoreFile = false
-                try { hasStoreFile = debugCfg.storeFile != null } catch (Throwable ignored2) {}
-                if (!hasStoreFile) {
-                    def home = System.getProperty('user.home')
-                    def ksFile = new File(home, '.android/debug.keystore')
-                    if (!ksFile.exists()) {
-                        ksFile.parentFile.mkdirs()
-                        def keytool = System.getProperty('java.home') + '/bin/keytool'
-                        project.exec {
-                            commandLine keytool,
-                                '-genkeypair', '-v',
-                                '-keystore', ksFile.absolutePath,
-                                '-storepass', 'android',
-                                '-alias', 'androiddebugkey',
-                                '-keypass', 'android',
-                                '-dname', 'CN=Android Debug,O=Android,C=US',
-                                '-keyalg', 'RSA',
-                                '-keysize', '2048',
-                                '-validity', '10000'
-                            standardOutput = new ByteArrayOutputStream()
-                            errorOutput = new ByteArrayOutputStream()
-                            ignoreExitValue = true
-                        }
-                    }
-                    if (ksFile.exists()) {
-                        debugCfg.storeFile = ksFile
-                        debugCfg.storePassword = 'android'
-                        debugCfg.keyAlias = 'androiddebugkey'
-                        debugCfg.keyPassword = 'android'
-                        logger.lifecycle("CDV: bound debug signingConfig to \${ksFile.absolutePath}")
-                    }
+            def currentStore = null
+            try { currentStore = debugCfg?.storeFile } catch (Throwable ignored2) {}
+            logger.lifecycle("CDV-DIAG: signingConfigs.debug=\${debugCfg != null}, storeFile=\${currentStore}, exists=\${currentStore?.exists()}")
+
+            def home = System.getProperty('user.home')
+            def ksFile = (currentStore != null) ? currentStore : new File(home, '.android/debug.keystore')
+
+            if (!ksFile.exists()) {
+                ksFile.parentFile.mkdirs()
+                def keytool = System.getProperty('java.home') + '/bin/keytool'
+                def out = new ByteArrayOutputStream()
+                def err = new ByteArrayOutputStream()
+                def res = project.exec {
+                    commandLine keytool,
+                        '-genkeypair', '-v',
+                        '-keystore', ksFile.absolutePath,
+                        '-storepass', 'android',
+                        '-alias', 'androiddebugkey',
+                        '-keypass', 'android',
+                        '-dname', 'CN=Android Debug,O=Android,C=US',
+                        '-keyalg', 'RSA',
+                        '-keysize', '2048',
+                        '-validity', '10000'
+                    standardOutput = out
+                    errorOutput = err
+                    ignoreExitValue = true
                 }
+                logger.lifecycle("CDV-DIAG: keytool exit=\${res.exitValue}, ksExists=\${ksFile.exists()}")
+                if (res.exitValue != 0) {
+                    logger.warn("CDV-DIAG: keytool stderr: \${err.toString()}")
+                }
+            }
+
+            if (debugCfg != null && ksFile.exists()) {
+                debugCfg.storeFile = ksFile
+                debugCfg.storePassword = 'android'
+                debugCfg.keyAlias = 'androiddebugkey'
+                debugCfg.keyPassword = 'android'
+                logger.lifecycle("CDV: bound debug signingConfig to \${ksFile.absolutePath}")
             }
         } catch (Throwable t) {
             logger.warn("CDV: could not bind debug signingConfig: \${t.message}")
+        }
+
+        // Diagnostic: dump every applicationVariant's signing/applicationId
+        // state. Helps locate which AGP Property is still null when the next
+        // 'Cannot query the value of this property' error reproduces.
+        try {
+            project.android.applicationVariants.all { v ->
+                def sc = null
+                try { sc = v.signingConfig } catch (Throwable ignored3) {}
+                def sf = null
+                try { sf = sc?.storeFile } catch (Throwable ignored4) {}
+                logger.lifecycle("CDV-DIAG: variant=\${v.name} buildType=\${v.buildType.name} signing=\${sc?.name} storeFile=\${sf} exists=\${sf?.exists()}")
+            }
+        } catch (Throwable t) {
+            logger.warn("CDV-DIAG: variant introspection failed: \${t.message}")
         }
     }
 }
