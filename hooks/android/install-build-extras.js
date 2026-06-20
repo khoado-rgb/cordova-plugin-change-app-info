@@ -24,33 +24,72 @@
 const fs = require('fs');
 const path = require('path');
 
-const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v1';
+const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v2';
 
 const CONTENT = `${MARKER}
 // Raise Java source/target so OutSystems-bundled plugins that use Java 10+
 // 'var' declarations compile under MABS, whose Android template still pins
 // sourceCompatibility/targetCompatibility to 1.8.
+//
+// Kotlin tasks (kaptGenerateStubsRelease*, compile*Kotlin) must share the
+// same jvmTarget or Gradle aborts with:
+//   Inconsistent JVM-target compatibility detected for tasks
+//     'compileReleaseJavaWithJavac' (17) and
+//     'kaptGenerateStubsReleaseKotlin' (1.8).
 
 android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    if (project.android.hasProperty('kotlinOptions')) {
+        kotlinOptions {
+            jvmTarget = '17'
+        }
+    }
 }
 
-// MABS template may set compileOptions AFTER this file is applied (e.g. via
-// configuration phase callbacks). Re-assert in afterEvaluate so the final
-// value of the JavaCompile tasks is Java 17, regardless of ordering.
+// MABS template may set compileOptions / kotlinOptions AFTER this file is
+// applied (e.g. via configuration phase callbacks). Re-assert in
+// afterEvaluate so the final values win, regardless of ordering.
 afterEvaluate { project ->
     if (project.extensions.findByName('android') != null) {
         project.android.compileOptions {
             sourceCompatibility JavaVersion.VERSION_17
             targetCompatibility JavaVersion.VERSION_17
         }
+        try {
+            project.android.kotlinOptions.jvmTarget = '17'
+        } catch (Throwable ignored) {
+            // kotlinOptions not exposed on this AGP/Kotlin combo — fall back
+            // to task-level configuration below.
+        }
     }
     project.tasks.withType(JavaCompile).configureEach {
         sourceCompatibility = JavaVersion.VERSION_17.toString()
         targetCompatibility = JavaVersion.VERSION_17.toString()
+    }
+    // Force every Kotlin compile / kapt stub task to jvmTarget 17. Reflective
+    // access keeps this script compatible across Kotlin Gradle plugin versions
+    // (the KotlinCompile class lives in different packages over time, and
+    // 'compilerOptions' replaced 'kotlinOptions' in newer versions).
+    project.tasks.configureEach { task ->
+        def name = task.name.toLowerCase()
+        if (!name.contains('kotlin') && !name.contains('kapt')) {
+            return
+        }
+        try {
+            if (task.hasProperty('kotlinOptions')) {
+                task.kotlinOptions.jvmTarget = '17'
+            }
+        } catch (Throwable ignored) {}
+        try {
+            if (task.hasProperty('compilerOptions')) {
+                def jvmTargetEnum = Class.forName('org.jetbrains.kotlin.gradle.dsl.JvmTarget')
+                def jvm17 = jvmTargetEnum.getMethod('fromTarget', String).invoke(null, '17')
+                task.compilerOptions.jvmTarget.set(jvm17)
+            }
+        } catch (Throwable ignored) {}
     }
 }
 `;
@@ -81,4 +120,5 @@ module.exports = function (context) {
   fs.writeFileSync(targetPath, CONTENT, 'utf8');
   console.log(`   ✅ Wrote ${targetPath}`);
   console.log('      → compileOptions = JavaVersion.VERSION_17 (forced via afterEvaluate)');
+  console.log('      → Kotlin/kapt tasks jvmTarget = 17 (forced via afterEvaluate)');
 };
