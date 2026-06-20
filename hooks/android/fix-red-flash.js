@@ -260,6 +260,11 @@ function getConfiguredBackgroundColor(config) {
          config.getPreference('WEBVIEW_BACKGROUND_COLOR');
 }
 
+function getConfiguredStatusBarColor(config) {
+  return config.getPreference('StatusBarBackgroundColor', 'android') ||
+         config.getPreference('StatusBarBackgroundColor');
+}
+
 /**
  * Find MainActivity.java in the project
  */
@@ -297,18 +302,22 @@ function findMainActivity(baseDir) {
 /**
  * Inject background color into MainActivity
  */
-function injectMainActivityBackground(mainActivityPath, backgroundColor) {
+function injectMainActivityBackground(mainActivityPath, backgroundColor, statusBarColor) {
   if (!fs.existsSync(mainActivityPath)) {
     console.log('   ⚠️  MainActivity.java not found');
     return false;
   }
-  
+
   console.log(`   📄 Reading MainActivity from: ${mainActivityPath}`);
   let content = fs.readFileSync(mainActivityPath, 'utf8');
 
+  const effectiveStatusBarColor = statusBarColor || backgroundColor;
+
   // Current patch version marker. Bump when injected block changes so older
   // patched files get re-injected with the latest code.
-  const PATCH_VERSION = 'v3';
+  // v4: opt out of Android 15+ edge-to-edge enforcement (targetSdk 35+ ignores
+  //     cordova-plugin-statusbar's StatusBarOverlaysWebView=false otherwise).
+  const PATCH_VERSION = 'v4';
   const versionMarker = `// FIX_RED_FLASH ${PATCH_VERSION}`;
   if (content.includes(versionMarker)) {
     console.log('   ✓ MainActivity already patched (current version)');
@@ -372,7 +381,7 @@ function injectMainActivityBackground(mainActivityPath, backgroundColor) {
     console.log('   🎯 Found onCreate, injecting post-super background...');
     content = content.replace(
       postSuperRegex,
-      `$1\n\n        // FIX_RED_FLASH v2 (post-super): re-assert bg on decor + WebView for SPA navigation\n        try {\n            int bgColor = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));\n            getWindow().getDecorView().setBackgroundColor(bgColor);\n            if (appView != null && appView.getView() != null) {\n                appView.getView().setBackgroundColor(bgColor);\n            }\n        } catch (Exception e) {\n            android.util.Log.e("FixRedFlash", "post-super: " + e.getMessage());\n        }`
+      `$1\n\n        // FIX_RED_FLASH v4 (post-super): re-assert bg on decor + WebView for SPA navigation,\n        //                              and opt out of Android 15+ edge-to-edge so the status bar\n        //                              gets its own opaque stripe (StatusBarOverlaysWebView=false).\n        try {\n            int bgColor = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));\n            getWindow().getDecorView().setBackgroundColor(bgColor);\n            if (appView != null && appView.getView() != null) {\n                appView.getView().setBackgroundColor(bgColor);\n            }\n            try {\n                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), true);\n                getWindow().setStatusBarColor(Color.parseColor("${effectiveStatusBarColor}"));\n            } catch (Throwable __frfE2e) {\n                android.util.Log.e("FixRedFlash", "edge-to-edge: " + __frfE2e.getMessage());\n            }\n        } catch (Exception e) {\n            android.util.Log.e("FixRedFlash", "post-super: " + e.getMessage());\n        }`
     );
     
     fs.writeFileSync(mainActivityPath, content, 'utf8');
@@ -569,11 +578,14 @@ function fixRedFlash(context) {
     console.log('\n⚠️  Invalid background color, skipping red flash fix');
     return;
   }
-  
+
+  let statusBarColor = normalizeHexColor(getConfiguredStatusBarColor(config)) || backgroundColor;
+
   console.log('\n══════════════════════════════════════════════');
   console.log('  🔧 FIX RED FLASH AFTER SPLASH SCREEN');
   console.log('══════════════════════════════════════════════');
   console.log(`🎨 Background color: ${backgroundColor}`);
+  console.log(`🎨 Status bar color: ${statusBarColor}`);
   console.log(`📌 Source: ${backgroundSource}`);
   console.log(`📂 Project root: ${root}`);
   
@@ -584,7 +596,7 @@ function fixRedFlash(context) {
   );
   
   if (mainActivityPath) {
-    injectMainActivityBackground(mainActivityPath, backgroundColor);
+    injectMainActivityBackground(mainActivityPath, backgroundColor, statusBarColor);
   } else {
     console.log('   ⚠️  MainActivity.java not found');
     console.log('   📂 Searched in: ' + path.join(root, 'platforms/android/app/src/main/java'));
