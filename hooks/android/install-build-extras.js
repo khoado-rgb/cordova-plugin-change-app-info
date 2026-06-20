@@ -24,7 +24,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v3';
+const MARKER = '// CHANGE_APP_INFO_BUILD_EXTRAS v4';
 
 const CONTENT = `${MARKER}
 // Raise Java source/target so OutSystems-bundled plugins that use Java 10+
@@ -90,9 +90,6 @@ project.plugins.withId('org.jetbrains.kotlin.android') {
 
 // Re-assert compileOptions inside afterEvaluate so any MABS template
 // configuration callback that mutates compileOptions later cannot stomp it.
-// SCOPE: only android.compileOptions and JavaCompile tasks. Do NOT iterate
-// every task here; doing so crashes AGP 8.x lazy property resolution for
-// debug variants.
 afterEvaluate { project ->
     if (project.extensions.findByName('android') != null) {
         project.android.compileOptions {
@@ -105,6 +102,54 @@ afterEvaluate { project ->
             // kotlinOptions not exposed on this AGP/Kotlin combo — already
             // covered by the plugins.withId block above.
         }
+
+        // Ensure the debug signingConfig has a usable storeFile. On MABS +
+        // cordova-android 14, the build worker only provisions the release
+        // keystore; the debug signingConfig is left with a null storeFile
+        // Property, so 'cdvBuildDebug' fails during dependency resolution
+        // with: Could not determine the dependencies of task ':app:packageDebug'.
+        //       > Cannot query the value of this property because it has no value available.
+        // Fall back to ~/.android/debug.keystore (AGP convention) — auto-create
+        // it with keytool when missing (clean MABS worker may not have one).
+        try {
+            def debugCfg = project.android.signingConfigs.findByName('debug')
+            if (debugCfg != null) {
+                def hasStoreFile = false
+                try { hasStoreFile = debugCfg.storeFile != null } catch (Throwable ignored2) {}
+                if (!hasStoreFile) {
+                    def home = System.getProperty('user.home')
+                    def ksFile = new File(home, '.android/debug.keystore')
+                    if (!ksFile.exists()) {
+                        ksFile.parentFile.mkdirs()
+                        def keytool = System.getProperty('java.home') + '/bin/keytool'
+                        project.exec {
+                            commandLine keytool,
+                                '-genkeypair', '-v',
+                                '-keystore', ksFile.absolutePath,
+                                '-storepass', 'android',
+                                '-alias', 'androiddebugkey',
+                                '-keypass', 'android',
+                                '-dname', 'CN=Android Debug,O=Android,C=US',
+                                '-keyalg', 'RSA',
+                                '-keysize', '2048',
+                                '-validity', '10000'
+                            standardOutput = new ByteArrayOutputStream()
+                            errorOutput = new ByteArrayOutputStream()
+                            ignoreExitValue = true
+                        }
+                    }
+                    if (ksFile.exists()) {
+                        debugCfg.storeFile = ksFile
+                        debugCfg.storePassword = 'android'
+                        debugCfg.keyAlias = 'androiddebugkey'
+                        debugCfg.keyPassword = 'android'
+                        logger.lifecycle("CDV: bound debug signingConfig to \${ksFile.absolutePath}")
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            logger.warn("CDV: could not bind debug signingConfig: \${t.message}")
+        }
     }
 }
 `;
@@ -115,7 +160,8 @@ module.exports = function (context) {
   }
 
   const root = context.opts.projectRoot;
-  const targetPath = path.join(root, 'platforms', 'android', 'app', 'build-extras.gradle');
+  const androidDir = path.join(root, 'platforms', 'android');
+  const targetPath = path.join(androidDir, 'app', 'build-extras.gradle');
   const targetDir = path.dirname(targetPath);
 
   if (!fs.existsSync(targetDir)) {
@@ -123,17 +169,43 @@ module.exports = function (context) {
     return;
   }
 
+  let wroteFile = false;
   if (fs.existsSync(targetPath)) {
     const existing = fs.readFileSync(targetPath, 'utf8');
     if (existing.includes(MARKER)) {
       console.log('   ✓ app/build-extras.gradle already at current version');
-      return;
+    } else {
+      console.log('   ♻️  Overwriting older app/build-extras.gradle');
+      fs.writeFileSync(targetPath, CONTENT, 'utf8');
+      wroteFile = true;
     }
-    console.log('   ♻️  Overwriting older app/build-extras.gradle');
+  } else {
+    fs.writeFileSync(targetPath, CONTENT, 'utf8');
+    wroteFile = true;
   }
 
-  fs.writeFileSync(targetPath, CONTENT, 'utf8');
-  console.log(`   ✅ Wrote ${targetPath}`);
-  console.log('      → compileOptions = JavaVersion.VERSION_17 (forced via afterEvaluate)');
-  console.log('      → Kotlin/kapt tasks jvmTarget = 17 (forced via afterEvaluate)');
+  if (wroteFile) {
+    console.log(`   ✅ Wrote ${targetPath}`);
+    console.log('      → compileOptions = JavaVersion.VERSION_17 (forced via afterEvaluate)');
+    console.log('      → Kotlin/kapt tasks jvmTarget = 17 (forced via afterEvaluate)');
+    console.log('      → debug signingConfig fallback to ~/.android/debug.keystore');
+  }
+
+  // Append stacktrace logging to gradle.properties so any future Gradle
+  // failure (e.g. "Cannot query the value of this property because it has no
+  // value available") prints the exact property class and source location.
+  // Without this, MABS' gradle invocation gives no stacktrace and the root
+  // cause cannot be determined from the build log alone.
+  const propsPath = path.join(androidDir, 'gradle.properties');
+  const STACKTRACE_MARKER = '# CHANGE_APP_INFO_DIAG';
+  const STACKTRACE_BLOCK = `\n${STACKTRACE_MARKER}\norg.gradle.logging.stacktrace=full\n`;
+  try {
+    let propsContent = fs.existsSync(propsPath) ? fs.readFileSync(propsPath, 'utf8') : '';
+    if (!propsContent.includes(STACKTRACE_MARKER)) {
+      fs.writeFileSync(propsPath, propsContent + STACKTRACE_BLOCK, 'utf8');
+      console.log(`   ✅ Enabled org.gradle.logging.stacktrace=full in ${propsPath}`);
+    }
+  } catch (e) {
+    console.log(`   ⚠️  could not patch gradle.properties: ${e.message}`);
+  }
 };
