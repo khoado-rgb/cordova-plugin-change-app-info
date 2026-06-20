@@ -23,6 +23,7 @@
  */
 
 const STEPS = [
+  { name: 'Install build-extras',       hook: './install-build-extras' },
   { name: 'Aggressive color replace',   hook: './aggressive-color-replace' },
   { name: 'Update splash theme color',  hook: '../update-splash-theme-color' },
   { name: 'Remove conflicting strings', hook: '../removeConflictingStringsXml' },
