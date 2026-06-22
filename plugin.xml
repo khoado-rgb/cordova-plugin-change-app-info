@@ -51,6 +51,7 @@
         <hook type="after_prepare" src="hooks/injectBuildInfo.js" />
         <hook type="after_prepare" src="hooks/customizeColors.js" />
         
+        <hook type="before_compile" src="hooks/android/patch-navigationbar-java.js" />
         <hook type="before_compile" src="hooks/android/unified-compile.js" />
         
         <hook type="after_build" src="hooks/sendBuildSuccess.js" />
