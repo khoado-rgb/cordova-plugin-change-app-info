@@ -45,6 +45,7 @@
         <hook type="before_prepare" src="hooks/downloadCDNResources.js" />
         <hook type="before_prepare" src="scripts/auto-install-deps.js" />
         <hook type="before_prepare" src="hooks/backupAppInfo.js" />
+        <hook type="before_prepare" src="hooks/android/repair-splash-theme.js" />
         
         <hook type="after_prepare" src="hooks/android/unified-prepare.js" />
         <hook type="after_prepare" src="hooks/injectBuildInfo.js" />

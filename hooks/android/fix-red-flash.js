@@ -630,8 +630,10 @@ function fixRedFlash(context) {
 }
 
 /**
- * Write app-level splash and post-splash themes. MainActivity must launch with
- * Theme.App.SplashScreen on Android 12+/AndroidX SplashScreen; that theme then
+ * Write app-level splash and post-splash themes. On API <31 (including many
+ * Huawei EMUI 12 devices based on Android 10/11), Theme.App.SplashScreen is a
+ * plain AppCompat theme to avoid OEM SplashScreen backport quirks. On API 31+
+ * it is overridden in values-v31 to use the Android 12 SplashScreen API, then
  * hands off to CordovaSplashTheme via postSplashScreenTheme.
  */
 function writeSplashThemeOverride(root, backgroundColor) {
@@ -656,18 +658,19 @@ function writeSplashThemeOverride(root, backgroundColor) {
   }
 
   // Same dedupe for Theme.App.SplashScreen — cordova-android / splashscreen
-  // plugin already declares it in themes.xml; we must own the only copy or
-  // mergeDebugResources fails with "Duplicate resources".
+  // plugin may already declare it outside themes.xml; themes.xml must keep the
+  // canonical copy because cordova-android reads it during the next prepare.
   const splashStyleRegex = /[ \t]*<style\s+name=["']Theme\.App\.SplashScreen["'][\s\S]*?<\/style>\s*\n?/g;
   for (const filePath of getValuesXmlFiles(root)) {
-    if (path.basename(filePath) === 'cdv_red_flash_theme.xml') continue;
+    const basename = path.basename(filePath);
+    if (basename === 'cdv_red_flash_theme.xml' || basename === 'themes.xml') continue;
     const c = fs.readFileSync(filePath, 'utf8');
     if (splashStyleRegex.test(c)) {
       splashStyleRegex.lastIndex = 0;
       const stripped = c.replace(splashStyleRegex, '');
       if (stripped !== c) {
         fs.writeFileSync(filePath, stripped, 'utf8');
-        console.log(`   ♻️  Removed duplicate Theme.App.SplashScreen from ${path.basename(filePath)}`);
+        console.log(`   ♻️  Removed duplicate Theme.App.SplashScreen from ${basename}`);
       }
     }
     splashStyleRegex.lastIndex = 0;
@@ -680,6 +683,37 @@ function writeSplashThemeOverride(root, backgroundColor) {
   if (!fs.existsSync(drawableDir)) fs.mkdirSync(drawableDir, { recursive: true });
   const transparentIconPath = path.join(drawableDir, 'cdv_transparent_splash_icon.png');
   fs.writeFileSync(transparentIconPath, buildTransparentPng());
+
+  const valuesV31Dir = path.join(root, 'platforms/android/app/src/main/res/values-v31');
+  if (!fs.existsSync(valuesV31Dir)) fs.mkdirSync(valuesV31Dir, { recursive: true });
+
+  const themesPath = path.join(valuesDir, 'themes.xml');
+  const baseSplashStyle = `    <style name="Theme.App.SplashScreen" parent="@style/CordovaSplashTheme">
+        <item name="windowSplashScreenBackground">@color/cordova_splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/cdv_transparent_splash_icon</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/cordova_splash_background</item>
+        <item name="windowSplashScreenAnimationDuration">0</item>
+        <item name="postSplashScreenTheme">@style/CordovaSplashTheme</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
+    </style>`;
+
+  let themesXml = fs.existsSync(themesPath)
+    ? fs.readFileSync(themesPath, 'utf8')
+    : '<?xml version="1.0" encoding="utf-8"?>\n<resources xmlns:tools="http://schemas.android.com/tools">\n</resources>\n';
+
+  themesXml = themesXml.replace(/<resources\b([^>]*)>/, (match, attrs) => {
+    if (/\bxmlns:tools=/.test(attrs)) return match;
+    return `<resources${attrs} xmlns:tools="http://schemas.android.com/tools">`;
+  });
+
+  if (splashStyleRegex.test(themesXml)) {
+    splashStyleRegex.lastIndex = 0;
+    themesXml = themesXml.replace(splashStyleRegex, `${baseSplashStyle}\n`);
+  } else {
+    splashStyleRegex.lastIndex = 0;
+    themesXml = themesXml.replace('</resources>', `${baseSplashStyle}\n</resources>`);
+  }
+  fs.writeFileSync(themesPath, themesXml, 'utf8');
 
   const themePath = path.join(valuesDir, 'cdv_red_flash_theme.xml');
   const xml = `<?xml version="1.0" encoding="utf-8"?>
@@ -694,26 +728,29 @@ function writeSplashThemeOverride(root, backgroundColor) {
         <item name="android:windowActionBar">false</item>
         <item name="android:windowDisablePreview">false</item>
     </style>
-    <!--
-      Android 12+ SplashScreen API theme. Default OutSystems build leaves the
-      animated icon as ic_cdv_splashscreen (a vector whose fillColor binds to
-      a Material You dynamic system color) and never sets
-      windowSplashScreenIconBackgroundColor or postSplashScreenTheme. On
-      emulators where the dynamic palette resolves to red, the splash exit
-      crossfade briefly paints a full-screen red frame between splash and
-      WebView. We override every relevant attr so every layer stays navy.
-    -->
+</resources>
+`;
+
+  const v31ThemePath = path.join(valuesV31Dir, 'cdv_red_flash_theme.xml');
+  const v31Xml = `<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated by cordova-plugin-change-app-info / fix-red-flash. Do not edit. -->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Android 12+ SplashScreen API theme. -->
     <style name="Theme.App.SplashScreen" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/cordova_splash_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/cdv_transparent_splash_icon</item>
         <item name="windowSplashScreenIconBackgroundColor">@color/cordova_splash_background</item>
         <item name="windowSplashScreenAnimationDuration">0</item>
         <item name="postSplashScreenTheme">@style/CordovaSplashTheme</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
     </style>
 </resources>
 `;
   fs.writeFileSync(themePath, xml, 'utf8');
+  fs.writeFileSync(v31ThemePath, v31Xml, 'utf8');
+  console.log(`   ✅ Patched themes.xml Theme.App.SplashScreen for API <31 fallback`);
   console.log(`   ✅ Wrote ${path.basename(themePath)} with bg=${backgroundColor}`);
+  console.log(`   ✅ Wrote values-v31/${path.basename(v31ThemePath)} for Android 12+ splash`);
   console.log(`   ✅ Wrote ${path.basename(transparentIconPath)} (1x1 transparent splash icon)`);
   return true;
 }
