@@ -7,7 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getConfigParser, hexToObjCUIColor, validateHexColor, findMainActivity } = require('./utils');
+const { getConfigParser, hexToObjCUIColor, validateHexColor, normalizeHexColor, findMainActivity } = require('./utils');
 
 function customizeAndroidWebview(context, backgroundColor) {
   const root = context.opts.projectRoot;
@@ -45,15 +45,9 @@ function customizeAndroidWebview(context, backgroundColor) {
     );
   }
   
-  // Normalize hex color (remove alpha if 8 digits)
-  let normalizedColor = backgroundColor.replace('#', '');
-  if (normalizedColor.length === 8) {
-    // Remove alpha channel (first 2 digits) for UI color
-    normalizedColor = '#' + normalizedColor.substring(2);
-  } else {
-    normalizedColor = '#' + normalizedColor;
-  }
-  
+  // Normalize: strips alpha (AARRGGBB or RRGGBBAA), lower-cases, returns #RRGGBB
+  const normalizedColor = normalizeHexColor(backgroundColor) || backgroundColor;
+
   // Find onCreate and insert the background setup code.
   const onCreateRegex = /(@Override\s+public void onCreate\(Bundle savedInstanceState\)\s*{[^}]*super\.onCreate\(savedInstanceState\);)/;
   
@@ -94,14 +88,9 @@ function customizeIOSWebview(context, backgroundColor) {
     return;
   }
   
-  // Normalize hex color (remove alpha if 8 digits)
-  let normalizedColor = backgroundColor.replace('#', '');
-  if (normalizedColor.length === 8) {
-    normalizedColor = '#' + normalizedColor.substring(2);
-  } else {
-    normalizedColor = '#' + normalizedColor;
-  }
-  
+  // Normalize hex color (handles AARRGGBB Android-style and RRGGBBAA CSS-style)
+  const normalizedColor = normalizeHexColor(backgroundColor) || backgroundColor;
+
   // Convert hex color to UIColor
   const uiColor = hexToObjCUIColor(normalizedColor);
   
@@ -125,34 +114,32 @@ module.exports = function(context) {
   const platforms = context.opts.platforms;
   const root = context.opts.projectRoot;
   const config = getConfigParser(context, path.join(root, 'config.xml'));
-  
-  // Read the background color from config.
-  let backgroundColor = config.getPreference('WEBVIEW_BACKGROUND_COLOR');
-  
-  if (!backgroundColor) {
-    console.log('\n📱 WEBVIEW_BACKGROUND_COLOR not configured, skipping customization');
-    return;
-  }
-  
-  // Validate color format
-  if (!validateHexColor(backgroundColor)) {
-    console.error('\n❌ Invalid WEBVIEW_BACKGROUND_COLOR format. Use hex color (e.g., #FFFFFF or #FFFFFFFF)');
-    return;
-  }
-  
-  // Ensure # prefix
-  if (!backgroundColor.startsWith('#')) {
-    backgroundColor = '#' + backgroundColor;
-  }
-  
+
   console.log('\n══════════════════════════════════════════════');
   console.log('  CUSTOMIZE WEBVIEW BACKGROUND COLOR         ');
   console.log('══════════════════════════════════════════════');
-  console.log(`Color: ${backgroundColor}`);
-  
+
   for (const platform of platforms) {
-    console.log(`\n📱 Processing ${platform}...`);
-    
+    // Read pref per-platform (config.xml puts WEBVIEW_BACKGROUND_COLOR inside <platform>)
+    let backgroundColor = config.getPreference('WEBVIEW_BACKGROUND_COLOR', platform) ||
+                          config.getPreference('WEBVIEW_BACKGROUND_COLOR');
+
+    if (!backgroundColor) {
+      console.log(`\n📱 ${platform}: WEBVIEW_BACKGROUND_COLOR not configured, skipping`);
+      continue;
+    }
+
+    if (!validateHexColor(backgroundColor)) {
+      console.error(`\n❌ ${platform}: Invalid WEBVIEW_BACKGROUND_COLOR format. Use hex (e.g., #FFFFFF)`);
+      continue;
+    }
+
+    if (!backgroundColor.startsWith('#')) {
+      backgroundColor = '#' + backgroundColor;
+    }
+
+    console.log(`\n📱 Processing ${platform}... color=${backgroundColor}`);
+
     try {
       if (platform === 'android') {
         customizeAndroidWebview(context, backgroundColor);

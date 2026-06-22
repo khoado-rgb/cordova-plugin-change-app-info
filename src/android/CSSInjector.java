@@ -44,6 +44,29 @@ public class CSSInjector extends CordovaPlugin {
         return color != null && HEX_COLOR_PATTERN.matcher(color.trim()).matches();
     }
 
+    /**
+     * Convert any accepted hex form into a CSS-safe `#RRGGBB[AA]`.
+     *
+     * Android resources / Cordova preferences emit `#AARRGGBB` (alpha first).
+     * If we drop that string straight into CSS, the browser parses it as
+     * `#RRGGBBAA` (alpha last) — turning navy `#ff1e1464` into 39%-alpha red,
+     * which composites to a pink first-paint flash.
+     *
+     * Heuristic: when the leading byte is `ff` (fully opaque) we treat the
+     * value as Android `#AARRGGBB` and drop the leading alpha. Otherwise we
+     * leave it alone — the value is either already 6-char, already CSS
+     * `#RRGGBBAA`, or a translucent Android color we cannot safely shorten.
+     */
+    private String normalizeHexForCss(String color) {
+        if (color == null) return null;
+        String hex = color.trim();
+        if (hex.startsWith("#")) hex = hex.substring(1);
+        if (hex.length() == 8 && hex.regionMatches(true, 0, "ff", 0, 2)) {
+            return "#" + hex.substring(2);
+        }
+        return color.startsWith("#") ? color : "#" + color;
+    }
+
     private boolean isSafeOrigin(String currentUrl) {
         if (currentUrl == null || currentUrl.isEmpty()) return false;
 
@@ -146,14 +169,14 @@ public class CSSInjector extends CordovaPlugin {
                 backgroundColor = null;
                 android.util.Log.d(TAG, "No custom or generated background color found; preserving default app colors");
             } else {
-                backgroundColor = bgColor.trim();
+                backgroundColor = normalizeHexForCss(bgColor.trim());
                 android.util.Log.d(TAG, "Using generated default app background: " + backgroundColor);
             }
         } else if (!isValidHexColor(bgColor)) {
             backgroundColor = null;
             android.util.Log.e(TAG, "Invalid background color format; preserving default app colors");
         } else {
-            backgroundColor = bgColor.trim();
+            backgroundColor = normalizeHexForCss(bgColor.trim());
         }
 
         if (backgroundColor != null && !backgroundColor.isEmpty()) {
@@ -341,6 +364,90 @@ public class CSSInjector extends CordovaPlugin {
     }
 
     /**
+     * Hook every Cordova lifecycle/WebView event so we can inject the background
+     * CSS at the earliest possible moment for each page load. The polling loop
+     * runs every 200 ms which is too slow to beat the WebView's first paint of
+     * the remote HTML body — by the time the first poll fires the browser has
+     * already rendered one frame of the OutSystems default body color (a brand
+     * red on this app). onPageStarted fires from WebViewClient.onPageStarted
+     * before any HTML is parsed, so the JS we queue here lands in the page's
+     * JS context before <body> is rendered.
+     */
+    @Override
+    public Object onMessage(String id, Object data) {
+        if (id == null) return null;
+        if ("onPageStarted".equals(id)) {
+            // Bypass the safe-origin gate here: we are *about* to navigate
+            // to this URL and we are only painting our own background color.
+            injectEarlyBackgroundCSS();
+        } else if ("onPageFinished".equals(id) || "onReceivedError".equals(id)) {
+            if (backgroundColor != null && !backgroundColor.isEmpty()) {
+                injectBackgroundColorCSS(backgroundColor);
+            }
+            injectBuildConfig();
+            injectCSSIntoWebView();
+        }
+        return null;
+    }
+
+    /**
+     * Inject the minimum CSS needed to suppress the red first-paint flash.
+     * Called from onMessage("onPageStarted", ...) which fires before the
+     * WebView parses the new page's HTML, so this script reaches the new
+     * page's JS context ahead of <body> rendering.
+     */
+    private void injectEarlyBackgroundCSS() {
+        if (backgroundColor == null || backgroundColor.isEmpty()) return;
+        if (!isValidHexColor(backgroundColor)) return;
+
+        final String bgColor = backgroundColor;
+        cordova.getActivity().runOnUiThread(() -> {
+            try {
+                CordovaWebView cordovaWebView = this.webView;
+                if (cordovaWebView == null) return;
+
+                if (cordovaWebView.getView() != null) {
+                    try {
+                        cordovaWebView.getView().setBackgroundColor(parseHexColor(bgColor));
+                    } catch (Exception ignored) {}
+                }
+
+                // Only paint bare html/body. Do NOT target OutSystems'
+                // own .splash-screen / .login-screen classes — those are
+                // owned by the remote app and must keep their styling.
+                String css = "html,body{" +
+                    "background-color:" + bgColor + " !important;" +
+                    "background:" + bgColor + " !important;" +
+                    "margin:0;padding:0;" +
+                    "}";
+
+                String javascript = "(function(){" +
+                    "function ap(){try{" +
+                    "if(typeof document==='undefined')return;" +
+                    "if(document.documentElement)document.documentElement.style.backgroundColor='" + bgColor + "';" +
+                    "if(document.body)document.body.style.backgroundColor='" + bgColor + "';" +
+                    "var t=document.head||document.getElementsByTagName('head')[0]||document.documentElement;" +
+                    "if(!t){setTimeout(ap,16);return;}" +
+                    "if(!document.getElementById('cordova-bg-early')){" +
+                    "var s=document.createElement('style');" +
+                    "s.id='cordova-bg-early';" +
+                    "s.textContent='" + css.replace("'", "\\'") + "';" +
+                    "if(t.firstChild)t.insertBefore(s,t.firstChild);else t.appendChild(s);" +
+                    "}" +
+                    "}catch(e){}}" +
+                    "ap();" +
+                    "if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',ap);" +
+                    "})();";
+
+                cordovaWebView.loadUrl("javascript:" + javascript);
+                android.util.Log.d(TAG, "[Early-BG] injected on onPageStarted: " + bgColor);
+            } catch (Exception e) {
+                android.util.Log.e(TAG, "Early BG injection failed", e);
+            }
+        });
+    }
+
+    /**
      * Inject build config from JSON file into window variable
      */
     private void injectBuildConfig() {
@@ -500,35 +607,18 @@ public class CSSInjector extends CordovaPlugin {
                 
                 CordovaWebView cordovaWebView = this.webView;
                 if (cordovaWebView != null) {
-                    String css = "html, body, #root, #app, .app-container, .screen, .page-wrapper { " +
+                    // Only paint background on bare html/body so the gap
+                    // between the native splash and the first OutSystems
+                    // React render does not flash red. Do NOT target
+                    // .splash-screen / .login-screen — those are owned by
+                    // OutSystems and have their own intentional colors.
+                    String css = "html, body { " +
                         "background-color: " + bgColor + " !important; " +
                         "background: " + bgColor + " !important; " +
                         "margin: 0; padding: 0; " +
                         "}";
                     
-                    String javascript = "(function() {" +
-                        "  try {" +
-                        "    if (typeof document === 'undefined') return;" +
-                        "    if (document.documentElement) {" +
-                        "      document.documentElement.style.backgroundColor = '" + bgColor + "';" +
-                        "    }" +
-                        "    if (document.body) {" +
-                        "      document.body.style.backgroundColor = '" + bgColor + "';" +
-                        "    }" +
-                        "    " +
-                        "    var target = document.head || document.getElementsByTagName('head')[0];" +
-                        "    if (target) {" +
-                        "      var s = document.getElementById('cordova-bg');" +
-                        "      if (!s) {" +
-                        "        s = document.createElement('style');" +
-                        "        s.id = 'cordova-bg';" +
-                        "        s.textContent = '" + css.replace("'", "\\'") + "';" +
-                        "        target.insertBefore(s, target.firstChild);" +
-                        "        console.log('[Native-BG] CSS injected: " + bgColor + "');" +
-                        "      }" +
-                        "    }" +
-                        "  } catch(e) { console.error('[Native-BG] Failed:', e); }" +
-                        "})();";
+                    String javascript = buildBackgroundGuardScript(bgColor, css);
                     
                     cordovaWebView.loadUrl("javascript:" + javascript);
                 }
@@ -536,6 +626,114 @@ public class CSSInjector extends CordovaPlugin {
                 android.util.Log.e(TAG, "Background CSS failed", e);
             }
         });
+    }
+
+    private String buildBackgroundGuardScript(String bgColor, String css) {
+        String escapedColor = escapeForSingleQuotedJs(bgColor);
+        String escapedCss = escapeForSingleQuotedJs(css);
+
+        return "(function() {" +
+               "  try {" +
+               "    if (typeof window === 'undefined' || typeof document === 'undefined') return;" +
+               "    var bg = '" + escapedColor + "';" +
+               "    var css = '" + escapedCss + "';" +
+               "    var normalizedBg = bg;" +
+               "    try {" +
+               "      var probe = document.createElement('div');" +
+               "      probe.style.backgroundColor = bg;" +
+               "      normalizedBg = probe.style.backgroundColor || bg;" +
+               "    } catch (e) {}" +
+               "    function setBg(el) {" +
+               "      if (!el || !el.style) return;" +
+               "      var current = el.style.backgroundColor || el.style.getPropertyValue('background-color');" +
+               "      var priority = el.style.getPropertyPriority('background-color');" +
+               "      if (priority !== 'important' || (current !== bg && current !== normalizedBg)) {" +
+               "        el.style.setProperty('background-color', bg, 'important');" +
+               "      }" +
+               "    }" +
+               "    function ensureStyle() {" +
+               "      var target = document.head || document.getElementsByTagName('head')[0] || document.documentElement;" +
+               "      if (!target) return false;" +
+               "      var s = document.getElementById('cordova-bg');" +
+               "      if (!s) {" +
+               "        s = document.createElement('style');" +
+               "        s.id = 'cordova-bg';" +
+               "        if (target.firstChild) { target.insertBefore(s, target.firstChild); } else { target.appendChild(s); }" +
+               "      }" +
+               "      if (s.textContent !== css) s.textContent = css;" +
+               "      return true;" +
+               "    }" +
+               "    function applyBg() {" +
+               "      try {" +
+               "        setBg(document.documentElement);" +
+               "        setBg(document.body);" +
+               "        if (!ensureStyle()) setTimeout(applyBg, 16);" +
+               "      } catch (e) { console.error('[Native-BG] Failed:', e); }" +
+               "    }" +
+               "    var previousGuard = window.__cordovaBgGuard;" +
+               "    if (previousGuard && previousGuard.color === bg && previousGuard.observer) {" +
+               "      previousGuard.apply = applyBg;" +
+               "      previousGuard.schedule = scheduleBg;" +
+               "      previousGuard.apply();" +
+               "      return;" +
+               "    }" +
+               "    var scheduled = false;" +
+               "    function scheduleBg() {" +
+               "      if (scheduled) return;" +
+               "      scheduled = true;" +
+               "      var run = function() { scheduled = false; applyBg(); };" +
+               "      if (window.requestAnimationFrame) window.requestAnimationFrame(run); else setTimeout(run, 0);" +
+               "      setTimeout(applyBg, 50);" +
+               "      setTimeout(applyBg, 150);" +
+               "    }" +
+               "    function routeChanged() {" +
+               "      var guard = window.__cordovaBgGuard;" +
+               "      if (guard && typeof guard.schedule === 'function') guard.schedule();" +
+               "    }" +
+               "    function wrapHistory(name) {" +
+               "      try {" +
+               "        var original = window.history && window.history[name];" +
+               "        if (typeof original !== 'function' || original.__cordovaBgWrapped) return;" +
+               "        var wrapped = function() {" +
+               "          var result = original.apply(this, arguments);" +
+               "          routeChanged();" +
+               "          return result;" +
+               "        };" +
+               "        wrapped.__cordovaBgWrapped = true;" +
+               "        window.history[name] = wrapped;" +
+               "      } catch (e) {}" +
+               "    }" +
+               "    if (previousGuard && previousGuard.observer) {" +
+               "      try { previousGuard.observer.disconnect(); } catch (e) {}" +
+               "    }" +
+               "    window.__cordovaBgGuard = { color: bg, apply: applyBg, schedule: scheduleBg, observer: null };" +
+               "    applyBg();" +
+               "    if (!window.__cordovaBgGuardListenersInstalled) {" +
+               "      wrapHistory('pushState');" +
+               "      wrapHistory('replaceState');" +
+               "      window.addEventListener('popstate', routeChanged, true);" +
+               "      window.addEventListener('hashchange', routeChanged, true);" +
+               "      window.addEventListener('pageshow', routeChanged, true);" +
+               "      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', routeChanged, true);" +
+               "      window.__cordovaBgGuardListenersInstalled = true;" +
+               "    }" +
+               "    if (window.MutationObserver && document.documentElement) {" +
+               "      var observer = new MutationObserver(routeChanged);" +
+               "      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });" +
+               "      window.__cordovaBgGuard.observer = observer;" +
+               "    }" +
+               "    console.log('[Native-BG] SPA background guard installed: " + escapedColor + "');" +
+               "  } catch(e) { console.error('[Native-BG] Guard failed:', e); }" +
+               "})();";
+    }
+
+    private String escapeForSingleQuotedJs(String value) {
+        if (value == null) return "";
+        return value
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "");
     }
 
     private void injectCSSIntoWebView() {

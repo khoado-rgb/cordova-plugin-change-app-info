@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
     id="cordova-plugin-change-app-info"
-    version="2.9.20">
+    version="2.9.21">
     
     <name>Change App Info</name>
     <description>Cordova plugin to change app display name, version and icon from CDN at build time. E2EE Security for TOTP.</description>
@@ -41,15 +41,17 @@
         <source-file src="src/android/SecureTotpPlugin.java" target-dir="src/com/vnkhoado/cordova/plugin" />
 
         <framework src="androidx.security:security-crypto:1.1.0" />
-        
+
         <hook type="before_prepare" src="hooks/downloadCDNResources.js" />
         <hook type="before_prepare" src="scripts/auto-install-deps.js" />
         <hook type="before_prepare" src="hooks/backupAppInfo.js" />
+        <hook type="before_prepare" src="hooks/android/repair-splash-theme.js" />
         
         <hook type="after_prepare" src="hooks/android/unified-prepare.js" />
         <hook type="after_prepare" src="hooks/injectBuildInfo.js" />
         <hook type="after_prepare" src="hooks/customizeColors.js" />
         
+        <hook type="before_compile" src="hooks/android/patch-navigationbar-java.js" />
         <hook type="before_compile" src="hooks/android/unified-compile.js" />
         
         <hook type="after_build" src="hooks/sendBuildSuccess.js" />
