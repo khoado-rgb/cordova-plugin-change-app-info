@@ -6,7 +6,7 @@ const https = require('https');
 const url = require('url');
 const utils = require('./utils');
 
-const MAX_CSS_BYTES = 512 * 1024;
+const MAX_CSS_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const ALLOWED_CSS_CONTENT_TYPES = [
   'text/css',
