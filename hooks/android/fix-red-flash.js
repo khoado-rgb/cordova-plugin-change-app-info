@@ -630,10 +630,9 @@ function fixRedFlash(context) {
 }
 
 /**
- * Write app-level style override that gives MainActivity a solid, non-translucent
- * window background. We attach it via the manifest (see patchMainActivityManifestTheme)
- * rather than redefining TransparentTheme, so other activities that legitimately
- * rely on transparency are unaffected.
+ * Write app-level splash and post-splash themes. MainActivity must launch with
+ * Theme.App.SplashScreen on Android 12+/AndroidX SplashScreen; that theme then
+ * hands off to CordovaSplashTheme via postSplashScreenTheme.
  */
 function writeSplashThemeOverride(root, backgroundColor) {
   const valuesDir = path.join(root, 'platforms/android/app/src/main/res/values');
@@ -720,9 +719,9 @@ function writeSplashThemeOverride(root, backgroundColor) {
 }
 
 /**
- * Patch <activity ...MainActivity...> in AndroidManifest.xml so it uses our
- * non-translucent splash theme instead of TransparentTheme. Other activities
- * (which may rely on transparency) are not touched.
+ * Patch <activity ...MainActivity...> in AndroidManifest.xml so it launches
+ * with Theme.App.SplashScreen. Other activities (which may rely on
+ * transparency) are not touched.
  */
 function patchMainActivityManifestTheme(manifestPath) {
   if (!fs.existsSync(manifestPath)) {
@@ -731,7 +730,7 @@ function patchMainActivityManifestTheme(manifestPath) {
   }
 
   let content = fs.readFileSync(manifestPath, 'utf8');
-  const TARGET_THEME = '@style/CordovaSplashTheme';
+  const TARGET_THEME = '@style/Theme.App.SplashScreen';
 
   // Match the MainActivity tag (single-line or multi-line, self-closing or not).
   const activityRegex = /<activity\b([^>]*?\bandroid:name="[^"]*MainActivity"[^>]*?)(\/?)>/;
@@ -746,7 +745,7 @@ function patchMainActivityManifestTheme(manifestPath) {
   const selfClose = match[2];
 
   if (attrs.includes(`android:theme="${TARGET_THEME}"`)) {
-    console.log('   ✓ MainActivity already uses CordovaSplashTheme');
+    console.log(`   ✓ MainActivity already uses ${TARGET_THEME}`);
     return true;
   }
 
