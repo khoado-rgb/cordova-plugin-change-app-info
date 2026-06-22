@@ -3,7 +3,10 @@
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
-const http = require('http');
+const { URL } = require('url');
+
+const MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_DOWNLOAD_REDIRECTS = 3;
 
 // ============================================================================
 // CONFIG UTILITIES
@@ -326,21 +329,34 @@ function validateHexColor(color) {
  */
 function normalizeHexColor(color) {
   if (!color) return null;
-  
-  // Remove # if present
-  let hex = color.replace(/^#/, '');
-  
-  // Remove alpha channel if present (last 2 chars if 8 chars long)
+
+  let hex = color.replace(/^#/, '').toLowerCase();
+
+  if (!/^[0-9a-f]+$/.test(hex)) return null;
+
+  // 3-char shorthand #RGB → #RRGGBB
+  if (hex.length === 3) {
+    hex = hex.split('').map(c => c + c).join('');
+  }
+
+  // 8-char with alpha: handle BOTH conventions.
+  //  - Android / native: #AARRGGBB (alpha first)  → e.g. #ff1e1464
+  //  - CSS / web:        #RRGGBBAA (alpha last)   → e.g. #1e1464ff
+  // When alpha is opaque (ff), drop it. When it's non-opaque, keep all 8 chars.
   if (hex.length === 8) {
-    hex = hex.substring(0, 6);
+    if (hex.startsWith('ff')) {
+      hex = hex.substring(2);          // strip AA prefix
+    } else if (hex.endsWith('ff')) {
+      hex = hex.substring(0, 6);       // strip AA suffix
+    } else {
+      // Non-opaque alpha: preserve as-is, Android-style (#AARRGGBB).
+      return '#' + hex;
+    }
   }
-  
-  // Ensure 6 characters
-  if (hex.length !== 6) {
-    return null;
-  }
-  
-  return '#' + hex.toLowerCase();
+
+  if (hex.length !== 6) return null;
+
+  return '#' + hex;
 }
 
 /**
@@ -474,27 +490,81 @@ function getInfoPlistPath(iosPath) {
 // DOWNLOAD UTILITIES
 // ============================================================================
 
+function validateHttpsDownloadUrl(urlString, baseUrl) {
+  const parsed = baseUrl ? new URL(urlString, baseUrl) : new URL(urlString);
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Only HTTPS download URLs are allowed');
+  }
+  return parsed;
+}
+
+function isAllowedDownloadContentType(contentType) {
+  if (!contentType) {
+    return true;
+  }
+  const normalized = contentType.split(';')[0].trim().toLowerCase();
+  return normalized.startsWith('image/') || normalized === 'application/octet-stream';
+}
+
 /**
- * Download file from URL
+ * Download an image asset from a HTTPS URL.
  */
-function downloadFile(url) {
+function downloadFile(urlString, redirectsRemaining = MAX_DOWNLOAD_REDIRECTS) {
   return new Promise((resolve, reject) => {
-    const protocol = url.startsWith('https') ? https : http;
-    protocol.get(url, (response) => {
+    let parsedUrl;
+    try {
+      parsedUrl = validateHttpsDownloadUrl(urlString);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    const request = https.get(parsedUrl, (response) => {
       // Handle redirects
-      if (response.statusCode === 301 || response.statusCode === 302) {
-        return downloadFile(response.headers.location).then(resolve).catch(reject);
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        if (redirectsRemaining <= 0) {
+          reject(new Error('Too many download redirects'));
+          return;
+        }
+
+        let redirectUrl;
+        try {
+          redirectUrl = validateHttpsDownloadUrl(response.headers.location, parsedUrl);
+        } catch (redirectError) {
+          reject(redirectError);
+          return;
+        }
+
+        return downloadFile(redirectUrl.href, redirectsRemaining - 1).then(resolve).catch(reject);
       }
       
       if (response.statusCode !== 200) {
         return reject(new Error(`Download failed with status ${response.statusCode}`));
       }
+
+      if (!isAllowedDownloadContentType(response.headers['content-type'])) {
+        return reject(new Error(`Unsupported download content type: ${response.headers['content-type']}`));
+      }
       
       const chunks = [];
-      response.on('data', chunk => chunks.push(chunk));
+      let totalBytes = 0;
+
+      response.on('data', chunk => {
+        totalBytes += chunk.length;
+        if (totalBytes > MAX_DOWNLOAD_BYTES) {
+          request.destroy(new Error(`Download exceeds ${MAX_DOWNLOAD_BYTES} bytes`));
+          return;
+        }
+        chunks.push(chunk);
+      });
       response.on('end', () => resolve(Buffer.concat(chunks)));
       response.on('error', reject);
-    }).on('error', reject);
+    });
+
+    request.setTimeout(30000, () => {
+      request.destroy(new Error('Download timeout after 30s'));
+    });
+    request.on('error', reject);
   });
 }
 

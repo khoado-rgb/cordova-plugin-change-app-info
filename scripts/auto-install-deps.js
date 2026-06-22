@@ -53,7 +53,7 @@ function getInstalledVersion(packageName) {
 
 function installPackage(packageName, version = '') {
   const versionStr = version ? `@${version}` : '';
-  const installCmd = `npm install ${packageName}${versionStr} --save-dev`;
+  const installCmd = `npm install ${packageName}${versionStr} --no-save --ignore-scripts`;
   
   try {
     log(colors.blue, `  ⏳ Installing ${packageName}...`);
@@ -88,7 +88,7 @@ function main() {
     },
     {
       name: 'jimp',
-      version: '^0.22.0',
+      version: '^1.6.1',
       type: 'OPTIONAL',
       description: 'Fallback icon processor (if sharp fails)',
       required: false

@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const { getConfigParser } = require('./utils');
 
+const SENSITIVE_PREFERENCE_PATTERN = /(secret|token|password|passwd|bearer|credential|private|api[_-]?key|auth)/i;
+
 /**
  * SIMPLIFIED: JSON-only config storage for native injection
  * 
@@ -55,6 +57,10 @@ function getConfigValue(envName, prefNames, config, defaultValue = '') {
   return defaultValue;
 }
 
+function isSensitivePreferenceName(name) {
+  return SENSITIVE_PREFERENCE_PATTERN.test(name || '');
+}
+
 /**
  * ✨ NEW: Get all custom preferences that start with specific prefixes
  * This allows dynamic custom fields without hardcoding
@@ -81,12 +87,17 @@ function getCustomPreferences(config) {
       const isCustom = customPrefixes.some(prefix => name.startsWith(prefix));
       
       if (isCustom && value) {
+        if (isSensitivePreferenceName(name)) {
+          console.log(`   🔒 Custom preference skipped from runtime config: ${name}`);
+          return;
+        }
+
         // Convert preference name to camelCase for consistency
         // TENANT_ID -> tenantId
         // CUSTOM_FIELD_1 -> customField1
         const camelCaseName = name.toLowerCase().replace(/_(.)/g, (_, char) => char.toUpperCase());
         customPrefs[camelCaseName] = value;
-        console.log(`   ✨ Custom preference: ${name} = ${value}`);
+        console.log(`   ✨ Custom preference included: ${name}`);
       }
     });
   } catch (error) {
@@ -273,7 +284,8 @@ function injectBuildInfo(context, platform) {
   
   if (relevantEnvVars.length > 0) {
     relevantEnvVars.forEach(key => {
-      console.log(`   - ${key}: ${process.env[key]}`);
+      const value = isSensitivePreferenceName(key) ? '(redacted)' : process.env[key];
+      console.log(`   - ${key}: ${value}`);
     });
   } else {
     console.log('   - (none found)');
@@ -316,7 +328,7 @@ function injectBuildInfo(context, platform) {
   if (Object.keys(customPreferences).length > 0) {
     console.log('\n   ✨ Custom preferences in build:');
     Object.keys(customPreferences).forEach(key => {
-      console.log(`   - ${key}: ${customPreferences[key]}`);
+      console.log(`   - ${key}: (included)`);
     });
   }
   

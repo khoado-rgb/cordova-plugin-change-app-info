@@ -37,7 +37,7 @@ The `buildBackgroundUserScript(color:)` method validates the color using a regex
 let hexPattern = try! NSRegularExpression(pattern: "^#?[A-Fa-f0-9]{6}([A-Fa-f0-9]{2})?$")
 ```
 
-If the color is invalid, it falls back to `#FFFFFF`.
+If the color is invalid, the background override is skipped so default app colors are preserved.
 
 ### CSS Injection
 

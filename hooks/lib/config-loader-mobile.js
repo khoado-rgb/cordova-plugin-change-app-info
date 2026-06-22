@@ -27,7 +27,6 @@
     VERSION_CODE: '1',
     ENVIRONMENT: 'production',
     API_HOSTNAME: 'api.example.com',
-    WEBVIEW_BACKGROUND_COLOR: '#FFFFFF',
     timestamp: new Date().toISOString(),
     preferences: {},
     metadata: {}

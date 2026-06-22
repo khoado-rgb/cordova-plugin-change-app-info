@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 /**
- * Hook để customize màu background của pre-render webview
- * Đặc biệt hữu ích cho OutSystems apps để thay đổi màu splash screen
+ * Hook for customizing the pre-render WebView background color.
+ * Useful for OutSystems apps that need a splash-screen color transition.
  */
 
 const fs = require('fs');
 const path = require('path');
-const { getConfigParser, hexToObjCUIColor, validateHexColor, findMainActivity } = require('./utils');
+const { getConfigParser, hexToObjCUIColor, validateHexColor, normalizeHexColor, findMainActivity } = require('./utils');
 
 function customizeAndroidWebview(context, backgroundColor) {
   const root = context.opts.projectRoot;
@@ -16,10 +16,10 @@ function customizeAndroidWebview(context, backgroundColor) {
     'platforms/android/app/src/main/java/io/outsystems/android/MainActivity.java'
   );
   
-  // Nếu không tìm thấy OutSystems MainActivity, thử tìm default
+  // If the OutSystems MainActivity is not found, try the default path.
   let activityPath = mainActivityPath;
   if (!fs.existsSync(activityPath)) {
-    // Tìm MainActivity.java trong thư mục project
+    // Find MainActivity.java inside the generated project.
     const appPath = path.join(root, 'platforms/android/app/src/main/java');
     activityPath = findMainActivity(appPath);
   }
@@ -31,13 +31,13 @@ function customizeAndroidWebview(context, backgroundColor) {
   
   let content = fs.readFileSync(activityPath, 'utf8');
   
-  // Check nếu đã customize rồi
+  // Check whether customization was already applied.
   if (content.includes('// CUSTOM_WEBVIEW_BACKGROUND')) {
     console.log('   ✓ Webview already customized');
     return;
   }
   
-  // Thêm import nếu chưa có
+  // Add imports when missing.
   if (!content.includes('import android.graphics.Color;')) {
     content = content.replace(
       /(package [^;]+;)/,
@@ -45,16 +45,10 @@ function customizeAndroidWebview(context, backgroundColor) {
     );
   }
   
-  // Normalize hex color (remove alpha if 8 digits)
-  let normalizedColor = backgroundColor.replace('#', '');
-  if (normalizedColor.length === 8) {
-    // Remove alpha channel (first 2 digits) for UI color
-    normalizedColor = '#' + normalizedColor.substring(2);
-  } else {
-    normalizedColor = '#' + normalizedColor;
-  }
-  
-  // Tìm onCreate method và thêm code
+  // Normalize: strips alpha (AARRGGBB or RRGGBBAA), lower-cases, returns #RRGGBB
+  const normalizedColor = normalizeHexColor(backgroundColor) || backgroundColor;
+
+  // Find onCreate and insert the background setup code.
   const onCreateRegex = /(@Override\s+public void onCreate\(Bundle savedInstanceState\)\s*{[^}]*super\.onCreate\(savedInstanceState\);)/;
   
   if (onCreateRegex.test(content)) {
@@ -75,7 +69,7 @@ function customizeIOSWebview(context, backgroundColor) {
   const config = getConfigParser(context, path.join(root, 'config.xml'));
   const projectName = config.name();
   
-  // Tìm AppDelegate.m
+  // Find AppDelegate.m.
   const appDelegatePath = path.join(
     root,
     `platforms/ios/${projectName}/Classes/AppDelegate.m`
@@ -88,24 +82,19 @@ function customizeIOSWebview(context, backgroundColor) {
   
   let content = fs.readFileSync(appDelegatePath, 'utf8');
   
-  // Check nếu đã customize rồi
+  // Check whether customization was already applied.
   if (content.includes('// CUSTOM_WEBVIEW_BACKGROUND')) {
     console.log('   ✓ Webview already customized');
     return;
   }
   
-  // Normalize hex color (remove alpha if 8 digits)
-  let normalizedColor = backgroundColor.replace('#', '');
-  if (normalizedColor.length === 8) {
-    normalizedColor = '#' + normalizedColor.substring(2);
-  } else {
-    normalizedColor = '#' + normalizedColor;
-  }
-  
+  // Normalize hex color (handles AARRGGBB Android-style and RRGGBBAA CSS-style)
+  const normalizedColor = normalizeHexColor(backgroundColor) || backgroundColor;
+
   // Convert hex color to UIColor
   const uiColor = hexToObjCUIColor(normalizedColor);
   
-  // Tìm application:didFinishLaunchingWithOptions và thêm code
+  // Find application:didFinishLaunchingWithOptions and insert the background setup code.
   const didFinishRegex = /(- \(BOOL\)application:\(UIApplication\*\)application didFinishLaunchingWithOptions:[^{]*{[^}]*self\.window = \[\[UIWindow alloc\] initWithFrame:\[UIScreen mainScreen\]\.bounds\];)/;
   
   if (didFinishRegex.test(content)) {
@@ -125,34 +114,32 @@ module.exports = function(context) {
   const platforms = context.opts.platforms;
   const root = context.opts.projectRoot;
   const config = getConfigParser(context, path.join(root, 'config.xml'));
-  
-  // Đọc background color từ config
-  let backgroundColor = config.getPreference('WEBVIEW_BACKGROUND_COLOR');
-  
-  if (!backgroundColor) {
-    console.log('\n📱 WEBVIEW_BACKGROUND_COLOR not configured, skipping customization');
-    return;
-  }
-  
-  // Validate color format
-  if (!validateHexColor(backgroundColor)) {
-    console.error('\n❌ Invalid WEBVIEW_BACKGROUND_COLOR format. Use hex color (e.g., #FFFFFF or #FFFFFFFF)');
-    return;
-  }
-  
-  // Ensure # prefix
-  if (!backgroundColor.startsWith('#')) {
-    backgroundColor = '#' + backgroundColor;
-  }
-  
+
   console.log('\n══════════════════════════════════════════════');
   console.log('  CUSTOMIZE WEBVIEW BACKGROUND COLOR         ');
   console.log('══════════════════════════════════════════════');
-  console.log(`Color: ${backgroundColor}`);
-  
+
   for (const platform of platforms) {
-    console.log(`\n📱 Processing ${platform}...`);
-    
+    // Read pref per-platform (config.xml puts WEBVIEW_BACKGROUND_COLOR inside <platform>)
+    let backgroundColor = config.getPreference('WEBVIEW_BACKGROUND_COLOR', platform) ||
+                          config.getPreference('WEBVIEW_BACKGROUND_COLOR');
+
+    if (!backgroundColor) {
+      console.log(`\n📱 ${platform}: WEBVIEW_BACKGROUND_COLOR not configured, skipping`);
+      continue;
+    }
+
+    if (!validateHexColor(backgroundColor)) {
+      console.error(`\n❌ ${platform}: Invalid WEBVIEW_BACKGROUND_COLOR format. Use hex (e.g., #FFFFFF)`);
+      continue;
+    }
+
+    if (!backgroundColor.startsWith('#')) {
+      backgroundColor = '#' + backgroundColor;
+    }
+
+    console.log(`\n📱 Processing ${platform}... color=${backgroundColor}`);
+
     try {
       if (platform === 'android') {
         customizeAndroidWebview(context, backgroundColor);

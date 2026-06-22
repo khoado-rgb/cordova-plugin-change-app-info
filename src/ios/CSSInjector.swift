@@ -2,6 +2,10 @@ import Foundation
 import WebKit
 import UIKit
 
+#if canImport(Cordova)
+import Cordova
+#endif
+
 @objc(CSSInjector)
 class CSSInjector: CDVPlugin {
     
@@ -9,11 +13,47 @@ class CSSInjector: CDVPlugin {
     private static let CONFIG_FILE_PATH = "www/cordova-build-config.json"
     private var cachedCSS: String?
     private var cachedConfig: [String: Any]?
+
+    private func configuredAllowedHosts() -> [String] {
+        let osDefaultHost = (self.commandDelegate.settings["defaulthostname"] as? String ?? "").lowercased()
+        let cordovaHost = (self.commandDelegate.settings["hostname"] as? String ?? "").lowercased()
+        return [osDefaultHost, cordovaHost].filter { !$0.isEmpty }
+    }
+
+    private func buildOriginGuardJavaScript() -> String {
+        let hosts = configuredAllowedHosts()
+        let data = try? JSONSerialization.data(withJSONObject: hosts, options: [])
+        let hostsJSON = data.flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+
+        return "(function(){var scheme=(window.location.protocol||'').replace(':','').toLowerCase();var host=(window.location.hostname||'').toLowerCase();if(scheme==='file'||scheme==='outsystems'||scheme==='ionic')return true;if(scheme==='https'&&host==='localhost')return true;var allowedHosts=\(hostsJSON);return allowedHosts.indexOf(host)!==-1;})()"
+    }
+
+    private func isSafeCurrentOrigin() -> Bool {
+        guard let wkWebView = self.webView as? WKWebView,
+              let url = wkWebView.url else {
+            return false
+        }
+
+        let scheme = url.scheme?.lowercased() ?? ""
+        let host = url.host?.lowercased() ?? ""
+
+        if scheme == "file" {
+            let filePath = url.standardizedFileURL.path
+            let bundlePath = Bundle.main.bundleURL.standardizedFileURL.path
+            return filePath == bundlePath || filePath.hasPrefix(bundlePath + "/")
+        }
+
+        if scheme == "outsystems" || scheme == "ionic" { return true }
+        if scheme == "https" && host == "localhost" { return true }
+
+        return configuredAllowedHosts().contains(host)
+    }
     
     override func pluginInitialize() {
         super.pluginInitialize()
         
-        // Read WEBVIEW_BACKGROUND_COLOR from preferences (with fallbacks)
+        // BackgroundColor is the canonical OutSystems preference. The webview
+        // color remains only a fallback for older configs.
         let bgColor = getBackgroundColor()
         
         if let color = bgColor {
@@ -54,8 +94,7 @@ class CSSInjector: CDVPlugin {
             }
             
             // 2. Install Background Color UserScript
-            if let bgColor = self.getBackgroundColor() {
-                let bgScript = self.buildBackgroundUserScript(color: bgColor)
+            if let bgColor = self.getBackgroundColor(), let bgScript = self.buildBackgroundUserScript(color: bgColor) {
                 contentController.addUserScript(bgScript)
                 print("[CSSInjector] ✅ Background UserScript installed: \(bgColor)")
             }
@@ -90,6 +129,7 @@ class CSSInjector: CDVPlugin {
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: configDict, options: [])
             guard let jsonString = String(data: jsonData, encoding: .utf8) else { return nil }
+            let originGuard = buildOriginGuardJavaScript()
             
             let escapedJSON = jsonString
                 .replacingOccurrences(of: "\\", with: "\\\\")
@@ -100,6 +140,7 @@ class CSSInjector: CDVPlugin {
             let javascript = """
             (function() {
                 try {
+                    if (!\(originGuard)) { return; }
                     var config = JSON.parse("\(escapedJSON)");
                     window.CORDOVA_BUILD_CONFIG = config;
                     window.AppConfig = config;
@@ -139,22 +180,23 @@ class CSSInjector: CDVPlugin {
      * Build Background Color UserScript
      * Sets background color before page renders (prevents white flash)
      */
-    private func buildBackgroundUserScript(color: String) -> WKUserScript {
+    private func buildBackgroundUserScript(color: String) -> WKUserScript? {
         // Validate hex format to prevent JS injection via malformed color preference
         let hexPattern = try! NSRegularExpression(pattern: "^#?[A-Fa-f0-9]{6}([A-Fa-f0-9]{2})?$")
-        let safeColor: String
-        if hexPattern.firstMatch(in: color, range: NSRange(color.startIndex..., in: color)) != nil {
-            safeColor = color
-        } else {
-            safeColor = "#FFFFFF"
+        guard hexPattern.firstMatch(in: color, range: NSRange(color.startIndex..., in: color)) != nil else {
+            print("[CSSInjector] Invalid background color format; preserving default app colors")
+            return nil
         }
-        
+
+        let safeColor = color
         let css = "html, body, #root, #app, .app-container { background-color: \(safeColor) !important; background: \(safeColor) !important; margin: 0; padding: 0; }"
         let escapedCSS = css.replacingOccurrences(of: "'", with: "\\'")
+        let originGuard = buildOriginGuardJavaScript()
         
         let javascript = """
         (function() {
             try {
+                if (!\(originGuard)) { return; }
                 // Set inline styles immediately
                 if (document.documentElement) {
                     document.documentElement.style.backgroundColor = '\(safeColor)';
@@ -194,10 +236,12 @@ class CSSInjector: CDVPlugin {
             print("[CSSInjector] Failed to encode CSS to Base64")
             return buildFallbackCSSUserScript(cssContent: css)
         }
+        let originGuard = buildOriginGuardJavaScript()
         
         let javascript = """
         (function() {
             try {
+                if (!\(originGuard)) { return; }
                 if (!document.getElementById('cdn-injected-styles')) {
                     var base64CSS = '\(base64CSS)';
                     var decodedCSS = decodeURIComponent(escape(atob(base64CSS)));
@@ -232,10 +276,12 @@ class CSSInjector: CDVPlugin {
             .replacingOccurrences(of: "\n", with: "\\n")
             .replacingOccurrences(of: "\r", with: "")
             .replacingOccurrences(of: "\t", with: "\\t")
+        let originGuard = buildOriginGuardJavaScript()
         
         let javascript = """
         (function() {
             try {
+                if (!\(originGuard)) { return; }
                 if (!document.getElementById('cdn-injected-styles')) {
                     var style = document.createElement('style');
                     style.id = 'cdn-injected-styles';
@@ -260,6 +306,15 @@ class CSSInjector: CDVPlugin {
     
     @objc(injectCSS:)
     func injectCSS(command: CDVInvokedUrlCommand) {
+        guard isSafeCurrentOrigin() else {
+            let pluginResult = CDVPluginResult(
+                status: CDVCommandStatus_ERROR,
+                messageAs: "SECURITY: Command rejected due to invalid Origin."
+            )
+            self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
+            return
+        }
+
         // Manual injection via JS call (fallback)
         injectCSSViaEvaluateJavaScript()
         
@@ -272,6 +327,15 @@ class CSSInjector: CDVPlugin {
     
     @objc(getConfig:)
     func getConfig(command: CDVInvokedUrlCommand) {
+        guard isSafeCurrentOrigin() else {
+            let pluginResult = CDVPluginResult(
+                status: CDVCommandStatus_ERROR,
+                messageAs: "SECURITY: Command rejected due to invalid Origin."
+            )
+            self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
+            return
+        }
+
         var config = cachedConfig
         if config == nil {
             config = readConfigFromBundle()
@@ -299,11 +363,15 @@ class CSSInjector: CDVPlugin {
      * Get background color from preferences (with fallbacks)
      */
     private func getBackgroundColor() -> String? {
-        if let color = self.commandDelegate.settings["webview_background_color"] as? String {
-            return color
-        } else if let color = self.commandDelegate.settings["backgroundcolor"] as? String {
+        if let color = self.commandDelegate.settings["backgroundcolor"] as? String {
             return color
         } else if let color = self.commandDelegate.settings["splashscreenbackgroundcolor"] as? String {
+            return color
+        } else if let color = self.commandDelegate.settings["androidwindowsplashscreenbackground"] as? String {
+            return color
+        } else if let color = self.commandDelegate.settings["androidwindowsplashscreenbackgroundcolor"] as? String {
+            return color
+        } else if let color = self.commandDelegate.settings["webview_background_color"] as? String {
             return color
         }
         return nil
@@ -381,10 +449,7 @@ class CSSInjector: CDVPlugin {
                 webView.scrollView.backgroundColor = color
                 print("[CSSInjector] Native WebView background set to: \(colorString)")
             } else {
-                // Fallback to clear
-                webView.backgroundColor = .clear
-                webView.isOpaque = false
-                print("[CSSInjector] Invalid color format, using clear: \(colorString)")
+                print("[CSSInjector] Invalid color format; preserving default app colors: \(colorString)")
             }
         }
     }
@@ -432,6 +497,11 @@ class CSSInjector: CDVPlugin {
                 print("[CSSInjector] WKWebView not available")
                 return
             }
+
+            guard self.isSafeCurrentOrigin() else {
+                print("[CSSInjector] Skipping manual CSS injection for unsafe origin")
+                return
+            }
             
             var cssContent = self.cachedCSS
             if cssContent == nil || cssContent!.isEmpty {
@@ -448,10 +518,12 @@ class CSSInjector: CDVPlugin {
                 print("[CSSInjector] Failed to encode CSS")
                 return
             }
+            let originGuard = self.buildOriginGuardJavaScript()
             
             let javascript = """
             (function() {
                 try {
+                    if (!\(originGuard)) { return; }
                     if (!document.getElementById('cdn-injected-styles')) {
                         var base64CSS = '\(base64CSS)';
                         var decodedCSS = decodeURIComponent(escape(atob(base64CSS)));

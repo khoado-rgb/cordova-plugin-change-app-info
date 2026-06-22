@@ -15,7 +15,7 @@
 - **Gradient Splash Screens** — CSS gradient syntax for native splash screens on Android and iOS
 - **Color Customization** — Splash screen, status bar, and webview background colors
 - **E2EE TOTP** — RSA-2048 OAEP-SHA256 encryption with Android Keystore / iOS Keychain
-- **OutSystems MABS** — Full compatibility with OutSystems cloud builds
+- **OutSystems MABS 12** — Full compatibility with OutSystems cloud builds
 
 ## Requirements
 
@@ -49,10 +49,10 @@ Add preferences to `config.xml`:
 <preference name="CDN_RESOURCE" value="https://cdn.example.com/app.css" />
 
 <!-- Colors -->
-<preference name="SplashScreenBackgroundColor" value="#001833" />
-<preference name="AndroidWindowSplashScreenBackground" value="#001833" />
-<preference name="BackgroundColor" value="#001833" />
-<preference name="StatusBarBackgroundColor" value="#001833" />
+<preference name="SplashScreenBackgroundColor" value="#112233" />
+<preference name="AndroidWindowSplashScreenBackground" value="#112233" />
+<preference name="BackgroundColor" value="#112233" />
+<preference name="StatusBarBackgroundColor" value="#112233" />
 <preference name="WEBVIEW_BACKGROUND_COLOR" value="#FFFFFF" />
 
 <!-- Optional -->
@@ -60,7 +60,7 @@ Add preferences to `config.xml`:
 <preference name="TENANT_ID" value="1234" />
 ```
 
-### OutSystems MABS Config (JSON)
+### OutSystems MABS 12 Config (JSON)
 
 ```json
 {
@@ -73,9 +73,9 @@ Add preferences to `config.xml`:
       { "name": "VERSION_NUMBER", "value": "1.0.0" },
       { "name": "VERSION_CODE", "value": "10" },
       { "name": "CDN_ICON", "value": "https://cdn.example.com/icon-1024.png" },
-      { "name": "SplashScreenBackgroundColor", "value": "#001833" },
-      { "name": "AndroidWindowSplashScreenBackground", "value": "#001833" },
-      { "name": "BackgroundColor", "value": "#001833" },
+      { "name": "SplashScreenBackgroundColor", "value": "#112233" },
+      { "name": "AndroidWindowSplashScreenBackground", "value": "#112233" },
+      { "name": "BackgroundColor", "value": "#112233" },
       { "name": "TENANT_ID", "value": "1234" }
     ],
     "android": [
@@ -98,10 +98,10 @@ Add preferences to `config.xml`:
 | `CDN_ICON` | URL to 1024×1024 PNG icon | `"https://..."` |
 | `CDN_RESOURCE` | URL to CSS file | `"https://..."` |
 | `ENVIRONMENT` | Environment label | `"production"` |
-| `SplashScreenBackgroundColor` | Splash background (hex) | `"#001833"` |
-| `AndroidWindowSplashScreenBackground` | Android 12+ splash | `"#001833"` |
-| `BackgroundColor` | Fallback background | `"#001833"` |
-| `StatusBarBackgroundColor` | Status bar color | `"#001833"` |
+| `SplashScreenBackgroundColor` | Splash background (hex) | `"#112233"` |
+| `AndroidWindowSplashScreenBackground` | Android 12+ splash | `"#112233"` |
+| `BackgroundColor` | Fallback background | `"#112233"` |
+| `StatusBarBackgroundColor` | Status bar color | `"#112233"` |
 | `WEBVIEW_BACKGROUND_COLOR` | Pre-render webview color | `"#FFFFFF"` |
 | `SPLASH_GRADIENT` | CSS gradient for splash | `"linear-gradient(...)"` |
 | `ENABLE_BUILD_NOTIFICATION` | Send POST after build | `"true"` |
@@ -113,9 +113,11 @@ Add preferences to `config.xml`:
 Preferences with these prefixes are automatically included in runtime config:
 
 - `TENANT_*` → e.g., `TENANT_ID` becomes `window.CORDOVA_BUILD_CONFIG.tenantId`
-- `CUSTOM_*` → e.g., `CUSTOM_API_KEY` becomes `customApiKey`
+- `CUSTOM_*` → e.g., `CUSTOM_REGION` becomes `customRegion`
 - `CLIENT_*` → e.g., `CLIENT_ID` becomes `clientId`
 - `APP_CUSTOM_*` → e.g., `APP_CUSTOM_THEME` becomes `appCustomTheme`
+
+Names that look sensitive, such as `SECRET`, `TOKEN`, `PASSWORD`, `BEARER`, `AUTH`, or `API_KEY`, are skipped and never injected into `window.CORDOVA_BUILD_CONFIG`.
 
 ## Runtime Config Access
 

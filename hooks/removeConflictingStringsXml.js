@@ -4,7 +4,7 @@
  * Remove strings.xml to avoid conflict with cdv_strings.xml
  * 
  * Problem: Both cdv_strings.xml and strings.xml may define app_name
- * Solution: Delete strings.xml if it exists, use only cdv_strings.xml
+ * Solution: Remove only duplicate app_name from strings.xml
  * 
  * This hook runs in after_prepare (before compilation)
  */
@@ -20,7 +20,7 @@ module.exports = function(context) {
   console.log('  REMOVE CONFLICTING STRINGS.XML');
   console.log('══════════════════════════════════════════════');
   console.log('🎯 Purpose: Prevent duplicate app_name resource');
-  console.log('📋 Strategy: Use cdv_strings.xml only\n');
+  console.log('📋 Strategy: Keep strings.xml and remove only duplicate app_name\n');
 
   for (const platform of platforms) {
     if (platform !== 'android') {
@@ -44,21 +44,23 @@ module.exports = function(context) {
     const hasCdvStrings = fs.existsSync(cdvStringsPath);
 
     console.log(`   📁 cdv_strings.xml: ${hasCdvStrings ? '✓ EXISTS' : '✗ NOT FOUND'}`);
-    console.log(`   📁 strings.xml: ${hasStrings ? '⚠️  EXISTS (will remove)' : '✓ NOT FOUND (good)'}`);
+    console.log(`   📁 strings.xml: ${hasStrings ? '⚠️  EXISTS (will inspect)' : '✓ NOT FOUND (good)'}`);
 
     if (hasCdvStrings && hasStrings) {
-      // Conflict detected - remove strings.xml
+      // Conflict detected - remove only the duplicate string entry.
       try {
         // Check if strings.xml has app_name
         const stringsContent = fs.readFileSync(stringsPath, 'utf8');
-        const hasAppName = /<string name="app_name">/.test(stringsContent);
+        const appNamePattern = /\s*<string\s+name=["']app_name["'][^>]*>[\s\S]*?<\/string>\s*/;
+        const hasAppName = appNamePattern.test(stringsContent);
 
         if (hasAppName) {
           console.log('   🚨 CONFLICT DETECTED: Both files define app_name');
-          console.log('   🗑️  Deleting strings.xml...');
-          fs.unlinkSync(stringsPath);
-          console.log('   ✅ strings.xml removed successfully');
-          console.log('   ℹ️  Using cdv_strings.xml as single source of truth');
+          console.log('   ✂️  Removing app_name from strings.xml...');
+          const updatedContent = stringsContent.replace(appNamePattern, '\n');
+          fs.writeFileSync(stringsPath, updatedContent, 'utf8');
+          console.log('   ✅ app_name removed from strings.xml');
+          console.log('   ℹ️  Other string resources were preserved');
         } else {
           console.log('   ℹ️  strings.xml exists but no app_name conflict');
         }

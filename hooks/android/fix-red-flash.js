@@ -22,7 +22,248 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getConfigParser } = require('../utils');
+const zlib = require('zlib');
+const { getConfigParser, normalizeHexColor } = require('../utils');
+
+function crc32(buf) {
+  let c;
+  let table = crc32.table;
+  if (!table) {
+    table = crc32.table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      table[n] = c >>> 0;
+    }
+  }
+  let crc = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) crc = (crc >>> 8) ^ table[(crc ^ buf[i]) & 0xff];
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length, 0);
+  const typeBuf = Buffer.from(type, 'ascii');
+  const crcBuf = Buffer.alloc(4); crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
+  return Buffer.concat([len, typeBuf, data, crcBuf]);
+}
+
+function buildTransparentPng() {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0); ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  const raw = Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00]);
+  const idat = zlib.deflateSync(raw);
+  return Buffer.concat([signature, pngChunk('IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', Buffer.alloc(0))]);
+}
+
+function colorResourceRegex(colorName) {
+  return new RegExp(`\\s*<color\\s+name=["']${colorName}["'][^>]*>[^<]*<\\/color>\\s*`, 'g');
+}
+
+function hasColorResource(content, colorName) {
+  return new RegExp(`<color\\s+name=["']${colorName}["']`, 'i').test(content);
+}
+
+function setOrAddColorResource(content, colorName, colorValue) {
+  const updateRegex = new RegExp(`(<color\\s+name=["']${colorName}["'][^>]*>)([^<]*)(<\\/color>)`, 'i');
+  if (updateRegex.test(content)) {
+    return content.replace(updateRegex, `$1${colorValue}$3`);
+  }
+
+  return content.replace(
+    '</resources>',
+    `    <color name="${colorName}">${colorValue}</color>\n</resources>`
+  );
+}
+
+function removeColorResource(content, colorName) {
+  return content.replace(colorResourceRegex(colorName), '\n');
+}
+
+function dedupeColorResources(root) {
+  const resPath = path.join(root, 'platforms/android/app/src/main/res/values');
+
+  if (!fs.existsSync(resPath)) {
+    return;
+  }
+
+  const files = fs.readdirSync(resPath)
+    .filter(file => file.endsWith('.xml'))
+    .map(file => path.join(resPath, file));
+
+  const keepPreference = {
+    cdv_splashscreen_background_color: ['cdv_colors.xml'],
+    cdv_background_color: ['cdv_colors.xml'],
+    cdv_splashscreen_background: ['cdv_colors.xml'],
+    splash_background: ['colors.xml'],
+    webview_background: ['colors.xml']
+  };
+
+  for (const [colorName, preferredFiles] of Object.entries(keepPreference)) {
+    const owners = files.filter(filePath => {
+      const content = fs.readFileSync(filePath, 'utf8');
+      return hasColorResource(content, colorName);
+    });
+
+    if (owners.length <= 1) {
+      continue;
+    }
+
+    const keepFile = owners.find(filePath => preferredFiles.includes(path.basename(filePath))) || owners[0];
+
+    for (const filePath of owners) {
+      if (filePath === keepFile) {
+        continue;
+      }
+
+      const originalContent = fs.readFileSync(filePath, 'utf8');
+      const updatedContent = removeColorResource(originalContent, colorName);
+      if (updatedContent !== originalContent) {
+        fs.writeFileSync(filePath, updatedContent, 'utf8');
+        console.log(`   ✅ Removed duplicate ${colorName} from ${path.basename(filePath)}`);
+      }
+    }
+  }
+}
+
+function getValuesXmlFiles(root) {
+  const resPath = path.join(root, 'platforms/android/app/src/main/res/values');
+
+  if (!fs.existsSync(resPath)) {
+    return [];
+  }
+
+  const priorityFiles = [
+    'colors.xml',
+    'cdv_colors.xml',
+    'themes.xml',
+    'styles.xml',
+    'cdv_themes.xml'
+  ];
+
+  const files = priorityFiles
+    .map(file => path.join(resPath, file))
+    .filter(filePath => fs.existsSync(filePath));
+
+  const extraFiles = fs.readdirSync(resPath)
+    .filter(file => file.endsWith('.xml'))
+    .map(file => path.join(resPath, file))
+    .filter(filePath => !files.includes(filePath));
+
+  return files.concat(extraFiles);
+}
+
+function readColorResource(content, colorName) {
+  const regex = new RegExp(`<color\\s+name=["']${colorName}["'][^>]*>([^<]*)<\\/color>`, 'i');
+  const match = content.match(regex);
+  return match && match[1] ? match[1].trim() : null;
+}
+
+function resolveColorValue(root, rawValue, seen = new Set()) {
+  if (!rawValue) {
+    return null;
+  }
+
+  const normalized = normalizeHexColor(rawValue.trim());
+  if (normalized) {
+    return { color: normalized, source: 'direct color' };
+  }
+
+  const colorRef = rawValue.trim().match(/^@color\/(.+)$/);
+  if (!colorRef) {
+    return null;
+  }
+
+  const colorName = colorRef[1];
+  if (seen.has(colorName)) {
+    return null;
+  }
+  seen.add(colorName);
+
+  return findGeneratedColorResource(root, colorName, seen);
+}
+
+function findGeneratedColorResource(root, colorName, seen = new Set()) {
+  for (const filePath of getValuesXmlFiles(root)) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const rawValue = readColorResource(content, colorName);
+    const resolved = resolveColorValue(root, rawValue, seen);
+
+    if (resolved) {
+      return {
+        color: resolved.color,
+        source: `${path.basename(filePath)}:${colorName}`
+      };
+    }
+  }
+
+  return null;
+}
+
+function findThemeWindowBackground(root) {
+  const themeFiles = getValuesXmlFiles(root).filter(filePath => {
+    const basename = path.basename(filePath);
+    return basename.includes('theme') || basename === 'styles.xml';
+  });
+
+  for (const filePath of themeFiles) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const match = content.match(/<item\s+name=["'](?:android:)?windowBackground["']>([^<]*)<\/item>/i);
+    if (!match || !match[1]) {
+      continue;
+    }
+
+    const resolved = resolveColorValue(root, match[1].trim());
+    if (resolved) {
+      return {
+        color: resolved.color,
+        source: `${path.basename(filePath)}:windowBackground`
+      };
+    }
+  }
+
+  return null;
+}
+
+function resolveGeneratedBackgroundColor(root) {
+  const candidateColorNames = [
+    'webview_background',
+    'cordova_splash_background',
+    'splash_background',
+    'cdv_splashscreen_background_color',
+    'cdv_background_color',
+    'cdv_splashscreen_background'
+  ];
+
+  for (const colorName of candidateColorNames) {
+    const resolved = findGeneratedColorResource(root, colorName);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return findThemeWindowBackground(root);
+}
+
+function getConfiguredBackgroundColor(config) {
+  return config.getPreference('BackgroundColor', 'android') ||
+         config.getPreference('BackgroundColor') ||
+         config.getPreference('SplashScreenBackgroundColor', 'android') ||
+         config.getPreference('SplashScreenBackgroundColor') ||
+         config.getPreference('AndroidWindowSplashScreenBackground', 'android') ||
+         config.getPreference('AndroidWindowSplashScreenBackground') ||
+         config.getPreference('AndroidWindowSplashScreenBackgroundColor', 'android') ||
+         config.getPreference('AndroidWindowSplashScreenBackgroundColor') ||
+         config.getPreference('WEBVIEW_BACKGROUND_COLOR', 'android') ||
+         config.getPreference('WEBVIEW_BACKGROUND_COLOR');
+}
+
+function getConfiguredStatusBarColor(config) {
+  return config.getPreference('StatusBarBackgroundColor', 'android') ||
+         config.getPreference('StatusBarBackgroundColor');
+}
 
 /**
  * Find MainActivity.java in the project
@@ -61,20 +302,35 @@ function findMainActivity(baseDir) {
 /**
  * Inject background color into MainActivity
  */
-function injectMainActivityBackground(mainActivityPath, backgroundColor) {
+function injectMainActivityBackground(mainActivityPath, backgroundColor, statusBarColor) {
   if (!fs.existsSync(mainActivityPath)) {
     console.log('   ⚠️  MainActivity.java not found');
     return false;
   }
-  
+
   console.log(`   📄 Reading MainActivity from: ${mainActivityPath}`);
   let content = fs.readFileSync(mainActivityPath, 'utf8');
-  
-  // Check if already injected
-  if (content.includes('// FIX_RED_FLASH')) {
-    console.log('   ✓ MainActivity already patched');
+
+  const effectiveStatusBarColor = statusBarColor || backgroundColor;
+
+  // Current patch version marker. Bump when injected block changes so older
+  // patched files get re-injected with the latest code.
+  // v4: opt out of Android 15+ edge-to-edge enforcement (targetSdk 35+ ignores
+  //     cordova-plugin-statusbar's StatusBarOverlaysWebView=false otherwise).
+  const PATCH_VERSION = 'v4';
+  const versionMarker = `// FIX_RED_FLASH ${PATCH_VERSION}`;
+  if (content.includes(versionMarker)) {
+    console.log('   ✓ MainActivity already patched (current version)');
     console.log(`   📍 MainActivity path: ${mainActivityPath}`);
     return true;
+  }
+  // Strip any previous FIX_RED_FLASH blocks (pre-super and post-super) for upgrade.
+  if (content.includes('// FIX_RED_FLASH')) {
+    console.log('   ♻️  Stripping older FIX_RED_FLASH blocks for upgrade...');
+    content = content.replace(
+      /\n\s*\/\/ FIX_RED_FLASH[\s\S]*?\}\s*catch\s*\(Exception[^)]*\)\s*\{[\s\S]*?\}\s*\n/g,
+      '\n'
+    );
   }
   
   // Add imports if needed - FIXED: Add both Color and ColorDrawable
@@ -103,14 +359,29 @@ function injectMainActivityBackground(mainActivityPath, backgroundColor) {
     }
   }
   
-  // Find onCreate and inject background color
-  const onCreateRegex = /(@Override\s+public void onCreate\(Bundle savedInstanceState\)\s*\{[^}]*super\.onCreate\(savedInstanceState\);)/;
-  
-  if (onCreateRegex.test(content)) {
-    console.log('   🎯 Found onCreate method, injecting background color...');
+  // Inject TWO blocks:
+  //   (1) Pre-super.onCreate — set window background immediately so the first
+  //       frame is the splash color even if the manifest theme is transparent.
+  //   (2) Post-super.onCreate — also lock WebView bg so SPA transitions don't
+  //       expose the system/wallpaper color.
+  const preSuperRegex = /(public void onCreate\(Bundle savedInstanceState\)\s*\{)(\s*super\.onCreate\(savedInstanceState\);)/;
+  const postSuperRegex = /(public void onCreate\(Bundle savedInstanceState\)\s*\{[\s\S]*?super\.onCreate\(savedInstanceState\);)/;
+
+  if (preSuperRegex.test(content)) {
+    console.log('   🎯 Found onCreate, injecting pre-super background...');
     content = content.replace(
-      onCreateRegex,
-      `$1\n\n        // FIX_RED_FLASH: Set window background to prevent flash\n        try {\n            int bgColor = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));\n            getWindow().getDecorView().setBackgroundColor(bgColor);\n        } catch (Exception e) {\n            android.util.Log.e("FixRedFlash", "Failed to set background: " + e.getMessage());\n        }`
+      preSuperRegex,
+      `$1\n        // FIX_RED_FLASH v2 (pre-super): lock window bg before DecorView attaches\n        try {\n            int __frfBg = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(__frfBg));\n        } catch (Exception __frfEx) {\n            android.util.Log.e("FixRedFlash", "pre-super: " + __frfEx.getMessage());\n        }$2`
+    );
+  } else {
+    console.log('   ⚠️  Could not match pre-super.onCreate pattern');
+  }
+
+  if (postSuperRegex.test(content)) {
+    console.log('   🎯 Found onCreate, injecting post-super background...');
+    content = content.replace(
+      postSuperRegex,
+      `$1\n\n        // FIX_RED_FLASH v4 (post-super): re-assert bg on decor + WebView for SPA navigation,\n        //                              and opt out of Android 15+ edge-to-edge so the status bar\n        //                              gets its own opaque stripe (StatusBarOverlaysWebView=false).\n        try {\n            int bgColor = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));\n            getWindow().getDecorView().setBackgroundColor(bgColor);\n            if (appView != null && appView.getView() != null) {\n                appView.getView().setBackgroundColor(bgColor);\n            }\n            try {\n                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), true);\n                getWindow().setStatusBarColor(Color.parseColor("${effectiveStatusBarColor}"));\n            } catch (Throwable __frfE2e) {\n                android.util.Log.e("FixRedFlash", "edge-to-edge: " + __frfE2e.getMessage());\n            }\n        } catch (Exception e) {\n            android.util.Log.e("FixRedFlash", "post-super: " + e.getMessage());\n        }`
     );
     
     fs.writeFileSync(mainActivityPath, content, 'utf8');
@@ -182,34 +453,32 @@ function syncAllColorFiles(root, backgroundColor) {
   if (fs.existsSync(cdvColorsPath)) {
     let content = fs.readFileSync(cdvColorsPath, 'utf8');
     
-    // Ensure all background-related colors match
+    // Keep Cordova cdv_* colors in cdv_colors.xml only.
     const colorNames = [
       'cdv_splashscreen_background_color',
-      'cdv_background_color',
-      'splash_background',
-      'webview_background'
+      'cdv_background_color'
     ];
     
     let modified = false;
     for (const colorName of colorNames) {
-      const regex = new RegExp(`<color name="${colorName}">([^<]*)</color>`);
-      if (regex.test(content)) {
-        const oldContent = content;
-        content = content.replace(regex, `<color name="${colorName}">${backgroundColor}</color>`);
-        if (oldContent !== content) modified = true;
-      } else {
-        // Add if missing
-        content = content.replace(
-          '</resources>',
-          `    <color name="${colorName}">${backgroundColor}</color>\n</resources>`
-        );
+      const oldContent = content;
+      content = setOrAddColorResource(content, colorName, backgroundColor);
+      if (oldContent !== content) modified = true;
+    }
+
+    // CRITICAL: Remove legacy names from cdv_colors.xml to prevent
+    // "Duplicate resources" build failure (they belong in colors.xml).
+    for (const legacyColorName of ['splash_background', 'webview_background']) {
+      if (hasColorResource(content, legacyColorName)) {
+        content = removeColorResource(content, legacyColorName);
+        console.log(`   ✅ Removed duplicate ${legacyColorName} from cdv_colors.xml`);
         modified = true;
       }
     }
     
     if (modified) {
       fs.writeFileSync(cdvColorsPath, content, 'utf8');
-      console.log('   ✅ Synchronized all color definitions');
+      console.log('   ✅ Synchronized cdv color definitions');
     }
   }
   
@@ -225,18 +494,9 @@ function syncAllColorFiles(root, backgroundColor) {
     
     let modified = false;
     for (const colorName of colorNames) {
-      const regex = new RegExp(`<color name="${colorName}">([^<]*)</color>`);
-      if (regex.test(content)) {
-        const oldContent = content;
-        content = content.replace(regex, `<color name="${colorName}">${backgroundColor}</color>`);
-        if (oldContent !== content) modified = true;
-      } else {
-        content = content.replace(
-          '</resources>',
-          `    <color name="${colorName}">${backgroundColor}</color>\n</resources>`
-        );
-        modified = true;
-      }
+      const oldContent = content;
+      content = setOrAddColorResource(content, colorName, backgroundColor);
+      if (oldContent !== content) modified = true;
     }
     
     if (modified) {
@@ -264,6 +524,10 @@ function updateThemeFiles(root, backgroundColor) {
       let content = fs.readFileSync(themePath, 'utf8');
       let modified = false;
       
+      const colorReference = themeFile === 'cdv_themes.xml'
+        ? '@color/cdv_splashscreen_background_color'
+        : '@color/splash_background';
+
       // Update all windowBackground references
       const patterns = [
         /<item name="android:windowBackground">([^<]*)<\/item>/g,
@@ -274,7 +538,7 @@ function updateThemeFiles(root, backgroundColor) {
         const oldContent = content;
         content = content.replace(
           pattern,
-          '<item name="android:windowBackground">@color/splash_background</item>'
+          `<item name="android:windowBackground">${colorReference}</item>`
         );
         if (oldContent !== content) modified = true;
       }
@@ -294,28 +558,35 @@ function fixRedFlash(context) {
   const root = context.opts.projectRoot;
   const config = getConfigParser(context, path.join(root, 'config.xml'));
   
-  // Get native background color from preferences. BackgroundColor is the
-  // canonical OutSystems value; WEBVIEW_BACKGROUND_COLOR is only a fallback.
-  let backgroundColor = config.getPreference('BackgroundColor') ||
-                        config.getPreference('SplashScreenBackgroundColor') ||
-                        config.getPreference('AndroidWindowSplashScreenBackground') ||
-                        config.getPreference('AndroidWindowSplashScreenBackgroundColor') ||
-                        config.getPreference('WEBVIEW_BACKGROUND_COLOR');
+  let backgroundColor = getConfiguredBackgroundColor(config);
+  let backgroundSource = 'config.xml';
   
   if (!backgroundColor) {
-    console.log('\n⚠️  No background color configured, skipping red flash fix');
+    const generatedBackground = resolveGeneratedBackgroundColor(root);
+    if (!generatedBackground) {
+      console.log('\n⚠️  No configured or generated background color found, skipping red flash fix');
+      return;
+    }
+
+    backgroundColor = generatedBackground.color;
+    backgroundSource = `generated Android resource (${generatedBackground.source})`;
+  }
+  
+  backgroundColor = normalizeHexColor(backgroundColor);
+
+  if (!backgroundColor) {
+    console.log('\n⚠️  Invalid background color, skipping red flash fix');
     return;
   }
-  
-  // Normalize color
-  if (!backgroundColor.startsWith('#')) {
-    backgroundColor = '#' + backgroundColor;
-  }
-  
+
+  let statusBarColor = normalizeHexColor(getConfiguredStatusBarColor(config)) || backgroundColor;
+
   console.log('\n══════════════════════════════════════════════');
   console.log('  🔧 FIX RED FLASH AFTER SPLASH SCREEN');
   console.log('══════════════════════════════════════════════');
   console.log(`🎨 Background color: ${backgroundColor}`);
+  console.log(`🎨 Status bar color: ${statusBarColor}`);
+  console.log(`📌 Source: ${backgroundSource}`);
   console.log(`📂 Project root: ${root}`);
   
   // 1. Inject MainActivity background
@@ -325,7 +596,7 @@ function fixRedFlash(context) {
   );
   
   if (mainActivityPath) {
-    injectMainActivityBackground(mainActivityPath, backgroundColor);
+    injectMainActivityBackground(mainActivityPath, backgroundColor, statusBarColor);
   } else {
     console.log('   ⚠️  MainActivity.java not found');
     console.log('   📂 Searched in: ' + path.join(root, 'platforms/android/app/src/main/java'));
@@ -334,6 +605,7 @@ function fixRedFlash(context) {
   // 2. Sync all color files
   console.log('\n🎨 Step 2: Synchronize color files');
   syncAllColorFiles(root, backgroundColor);
+  dedupeColorResources(root);
   
   // 3. Update theme files
   console.log('\n🎨 Step 3: Update theme files');
@@ -346,10 +618,189 @@ function fixRedFlash(context) {
     'platforms/android/app/src/main/AndroidManifest.xml'
   );
   updateManifestBackground(manifestPath, backgroundColor);
-  
+
+  // 5. Neutralize TransparentTheme so MainActivity launches non-translucent
+  console.log('\n🎭 Step 5: Override transparent activity theme');
+  writeSplashThemeOverride(root, backgroundColor);
+  patchMainActivityManifestTheme(manifestPath);
+
   console.log('\n══════════════════════════════════════════════');
   console.log('✅ Red flash fix completed!');
   console.log('══════════════════════════════════════════════\n');
+}
+
+/**
+ * Write app-level splash and post-splash themes. CordovaActivity always calls
+ * AndroidX SplashScreen.installSplashScreen(), including on API <31, so the
+ * launch theme must remain SplashScreen-compatible. We neutralize OEM flicker
+ * by using a transparent icon, a fixed background, and a post-splash theme.
+ */
+function writeSplashThemeOverride(root, backgroundColor) {
+  const valuesDir = path.join(root, 'platforms/android/app/src/main/res/values');
+  if (!fs.existsSync(valuesDir)) {
+    console.log('   ⚠️  values/ directory not found, skipping theme override');
+    return false;
+  }
+
+  // If cordova_splash_background already exists in another file, drop it first
+  // to avoid "Duplicate resources" build failure.
+  for (const filePath of getValuesXmlFiles(root)) {
+    if (path.basename(filePath) === 'cdv_red_flash_theme.xml') continue;
+    const c = fs.readFileSync(filePath, 'utf8');
+    if (hasColorResource(c, 'cordova_splash_background')) {
+      const stripped = removeColorResource(c, 'cordova_splash_background');
+      if (stripped !== c) {
+        fs.writeFileSync(filePath, stripped, 'utf8');
+        console.log(`   ♻️  Removed duplicate cordova_splash_background from ${path.basename(filePath)}`);
+      }
+    }
+  }
+
+  // Same dedupe for Theme.App.SplashScreen — cordova-android / splashscreen
+  // plugin may already declare it outside themes.xml; themes.xml must keep the
+  // canonical copy because cordova-android reads it during the next prepare.
+  const splashStyleRegex = /[ \t]*<style\s+name=["']Theme\.App\.SplashScreen["'][\s\S]*?<\/style>\s*\n?/g;
+  for (const filePath of getValuesXmlFiles(root)) {
+    const basename = path.basename(filePath);
+    if (basename === 'cdv_red_flash_theme.xml' || basename === 'themes.xml') continue;
+    const c = fs.readFileSync(filePath, 'utf8');
+    if (splashStyleRegex.test(c)) {
+      splashStyleRegex.lastIndex = 0;
+      const stripped = c.replace(splashStyleRegex, '');
+      if (stripped !== c) {
+        fs.writeFileSync(filePath, stripped, 'utf8');
+        console.log(`   ♻️  Removed duplicate Theme.App.SplashScreen from ${basename}`);
+      }
+    }
+    splashStyleRegex.lastIndex = 0;
+  }
+
+  // Drop a 1x1 transparent PNG to use as splash animated icon. Avoids
+  // ic_cdv_splashscreen.xml whose fillColor is a Material You dynamic system
+  // color that resolves to red on some Pixel emulators (Android 12+).
+  const drawableDir = path.join(root, 'platforms/android/app/src/main/res/drawable');
+  if (!fs.existsSync(drawableDir)) fs.mkdirSync(drawableDir, { recursive: true });
+  const transparentIconPath = path.join(drawableDir, 'cdv_transparent_splash_icon.png');
+  fs.writeFileSync(transparentIconPath, buildTransparentPng());
+
+  const valuesV31Dir = path.join(root, 'platforms/android/app/src/main/res/values-v31');
+  if (!fs.existsSync(valuesV31Dir)) fs.mkdirSync(valuesV31Dir, { recursive: true });
+
+  const themesPath = path.join(valuesDir, 'themes.xml');
+  const baseSplashStyle = `    <style name="Theme.App.SplashScreen" parent="Theme.SplashScreen.IconBackground">
+        <item name="windowSplashScreenBackground">@color/cordova_splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/cdv_transparent_splash_icon</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/cordova_splash_background</item>
+        <item name="windowSplashScreenAnimationDuration">0</item>
+        <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
+        <item name="postSplashScreenTheme">@style/CordovaSplashTheme</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
+    </style>`;
+
+  let themesXml = fs.existsSync(themesPath)
+    ? fs.readFileSync(themesPath, 'utf8')
+    : '<?xml version="1.0" encoding="utf-8"?>\n<resources xmlns:tools="http://schemas.android.com/tools">\n</resources>\n';
+
+  themesXml = themesXml.replace(/<resources\b([^>]*)>/, (match, attrs) => {
+    if (/\bxmlns:tools=/.test(attrs)) return match;
+    return `<resources${attrs} xmlns:tools="http://schemas.android.com/tools">`;
+  });
+
+  if (splashStyleRegex.test(themesXml)) {
+    splashStyleRegex.lastIndex = 0;
+    themesXml = themesXml.replace(splashStyleRegex, `${baseSplashStyle}\n`);
+  } else {
+    splashStyleRegex.lastIndex = 0;
+    themesXml = themesXml.replace('</resources>', `${baseSplashStyle}\n</resources>`);
+  }
+  fs.writeFileSync(themesPath, themesXml, 'utf8');
+
+  const themePath = path.join(valuesDir, 'cdv_red_flash_theme.xml');
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated by cordova-plugin-change-app-info / fix-red-flash. Do not edit. -->
+<resources>
+    <color name="cordova_splash_background">${backgroundColor}</color>
+    <style name="CordovaSplashTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/cordova_splash_background</item>
+        <item name="android:colorBackground">@color/cordova_splash_background</item>
+        <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowDisablePreview">false</item>
+    </style>
+</resources>
+`;
+
+  const v31ThemePath = path.join(valuesV31Dir, 'cdv_red_flash_theme.xml');
+  const v31Xml = `<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated by cordova-plugin-change-app-info / fix-red-flash. Do not edit. -->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Android 12+ SplashScreen API theme. -->
+    <style name="Theme.App.SplashScreen" parent="Theme.SplashScreen.IconBackground">
+        <item name="windowSplashScreenBackground">@color/cordova_splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/cdv_transparent_splash_icon</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/cordova_splash_background</item>
+        <item name="windowSplashScreenAnimationDuration">0</item>
+        <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
+        <item name="postSplashScreenTheme">@style/CordovaSplashTheme</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
+    </style>
+</resources>
+`;
+  fs.writeFileSync(themePath, xml, 'utf8');
+  fs.writeFileSync(v31ThemePath, v31Xml, 'utf8');
+  console.log(`   ✅ Patched themes.xml Theme.App.SplashScreen with stable SplashScreen theme`);
+  console.log(`   ✅ Wrote ${path.basename(themePath)} with bg=${backgroundColor}`);
+  console.log(`   ✅ Wrote values-v31/${path.basename(v31ThemePath)} for Android 12+ splash`);
+  console.log(`   ✅ Wrote ${path.basename(transparentIconPath)} (1x1 transparent splash icon)`);
+  return true;
+}
+
+/**
+ * Patch <activity ...MainActivity...> in AndroidManifest.xml so it launches
+ * with Theme.App.SplashScreen. Other activities (which may rely on
+ * transparency) are not touched.
+ */
+function patchMainActivityManifestTheme(manifestPath) {
+  if (!fs.existsSync(manifestPath)) {
+    console.log('   ⚠️  AndroidManifest.xml not found');
+    return false;
+  }
+
+  let content = fs.readFileSync(manifestPath, 'utf8');
+  const TARGET_THEME = '@style/Theme.App.SplashScreen';
+
+  // Match the MainActivity tag (single-line or multi-line, self-closing or not).
+  const activityRegex = /<activity\b([^>]*?\bandroid:name="[^"]*MainActivity"[^>]*?)(\/?)>/;
+  const match = content.match(activityRegex);
+
+  if (!match) {
+    console.log('   ⚠️  MainActivity <activity> tag not found in manifest');
+    return false;
+  }
+
+  const attrs = match[1];
+  const selfClose = match[2];
+
+  if (attrs.includes(`android:theme="${TARGET_THEME}"`)) {
+    console.log(`   ✓ MainActivity already uses ${TARGET_THEME}`);
+    return true;
+  }
+
+  let newAttrs;
+  if (/\bandroid:theme="[^"]*"/.test(attrs)) {
+    newAttrs = attrs.replace(/\bandroid:theme="[^"]*"/, `android:theme="${TARGET_THEME}"`);
+    console.log(`   🔁 Replaced MainActivity theme → ${TARGET_THEME}`);
+  } else {
+    newAttrs = attrs.replace(/(\bandroid:name="[^"]*MainActivity")/, `$1 android:theme="${TARGET_THEME}"`);
+    console.log(`   ➕ Added MainActivity theme → ${TARGET_THEME}`);
+  }
+
+  content = content.replace(activityRegex, `<activity${newAttrs}${selfClose}>`);
+  fs.writeFileSync(manifestPath, content, 'utf8');
+  console.log('   ✅ AndroidManifest.xml patched');
+  return true;
 }
 
 module.exports = function(context) {

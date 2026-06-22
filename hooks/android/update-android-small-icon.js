@@ -11,16 +11,16 @@ module.exports = function (ctx) {
 
   const rootDir = ctx.opts.projectRoot;
 
-  // Thư mục resource trong Android Gradle
+  // Android Gradle resource directory.
   const resDest = path.join(rootDir, "platforms", "android", "app", "src", "main", "res");
 
-  // Các density Android
+  // Android density folders.
   const densities = ["ldpi", "mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"];
 
   console.log("Cordova hook: Copying icons → ic_launcher.png");
 
   densities.forEach((dpi) => {
-    // Ưu tiên res/android, fallback sang source/res/android
+    // Prefer res/android, then fall back to source/res/android.
     const srcCandidates = [
       path.join(rootDir, "res", "android", `drawable-${dpi}`, "icon.png"),
       path.join(rootDir, "source", "res", "android", `drawable-${dpi}`, "icon.png"),

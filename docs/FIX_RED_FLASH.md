@@ -30,22 +30,22 @@ The plugin fixes this with a two-pronged approach:
 `CSSInjector.java` sets the WebView's native background color in `pluginInitialize()` before any page loads:
 
 ```java
-String bgColor = preferences.getString("WEBVIEW_BACKGROUND_COLOR", null);
-// Fallback chain: WEBVIEW_BACKGROUND_COLOR → BackgroundColor → SplashScreenBackgroundColor → #FFFFFF
+String bgColor = preferences.getString("BackgroundColor", null);
+// Preference chain: BackgroundColor → SplashScreenBackgroundColor → AndroidWindowSplashScreenBackground → WEBVIEW_BACKGROUND_COLOR
 ```
 
-The color is validated with `isValidHexColor()` to prevent injection. Invalid colors are ignored.
+The color is validated with `isValidHexColor()` to prevent injection. Missing or invalid colors are ignored so default OutSystems/MABS app colors are preserved.
 
 ## Configuration
 
-Set all color preferences to the same value for a seamless transition:
+Color preferences are optional. Set all color preferences to the same value only when you need an explicit seamless transition color:
 
 ```json
-{ "name": "SplashScreenBackgroundColor", "value": "#001833" },
-{ "name": "AndroidWindowSplashScreenBackground", "value": "#001833" },
-{ "name": "BackgroundColor", "value": "#001833" },
-{ "name": "StatusBarBackgroundColor", "value": "#001833" },
-{ "name": "WEBVIEW_BACKGROUND_COLOR", "value": "#001833" }
+{ "name": "SplashScreenBackgroundColor", "value": "#112233" },
+{ "name": "AndroidWindowSplashScreenBackground", "value": "#112233" },
+{ "name": "BackgroundColor", "value": "#112233" },
+{ "name": "StatusBarBackgroundColor", "value": "#112233" },
+{ "name": "WEBVIEW_BACKGROUND_COLOR", "value": "#112233" }
 ```
 
 ## Debugging
@@ -64,4 +64,4 @@ adb logcat -s CSSInjector:D | grep -i "background\|color"
 - Cordova Android 10.x – 13.x
 - Android 7.0+ (API 24+)
 - Android 12+ (API 31+) with `AndroidWindowSplashScreenBackground`
-- OutSystems MABS builds
+- OutSystems MABS 12 builds

@@ -9,6 +9,7 @@ This folder contains example configurations for OutSystems MABS and Cordova.
 | `outsystems-config-dev.json` | Development environment config |
 | `outsystems-config-staging.json` | Staging environment config |
 | `outsystems-config-production.json` | Production config with build notifications |
+| `outsystems-config-mabs12-app-distribution.json` | MABS 12 test-build config with App Distribution callback |
 | `outsystems-config-with-splash-color.json` | Custom splash screen color |
 | `outsystems-config-with-webview-color.json` | Custom webview background color |
 | `cordova-config.xml` | Standard Cordova config.xml example |
@@ -67,18 +68,21 @@ This folder contains example configurations for OutSystems MABS and Cordova.
 ### Production
 - Pin the plugin to a specific version tag (`#v2.9.20`)
 - Enable build notifications for deployment tracking
+- `APP_DISTRIBUTION_API` can be used without `ENABLE_BUILD_NOTIFICATION`
 - Use separate bearer tokens per environment
 - Set `VERSION_CODE` to a higher value than any previous release
 
 ## Color Consistency
 
-For a seamless app launch experience, set all color preferences to the same value:
+Color preferences are optional. If you omit them, the plugin preserves the default OutSystems/MABS app colors.
+
+For an explicit seamless launch color override, set all color preferences to the same value:
 
 ```json
-{ "name": "SplashScreenBackgroundColor", "value": "#001833" },
-{ "name": "AndroidWindowSplashScreenBackground", "value": "#001833" },
-{ "name": "BackgroundColor", "value": "#001833" },
-{ "name": "StatusBarBackgroundColor", "value": "#001833" }
+{ "name": "SplashScreenBackgroundColor", "value": "#112233" },
+{ "name": "AndroidWindowSplashScreenBackground", "value": "#112233" },
+{ "name": "BackgroundColor", "value": "#112233" },
+{ "name": "StatusBarBackgroundColor", "value": "#112233" }
 ```
 
-If your app content is light-themed, set `WEBVIEW_BACKGROUND_COLOR` to `#FFFFFF`. If dark-themed, set it to match the splash color.
+Set `WEBVIEW_BACKGROUND_COLOR` only when you need to override the pre-render WebView color.

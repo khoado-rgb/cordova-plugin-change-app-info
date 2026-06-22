@@ -12,7 +12,10 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const http = require('http');
+const { URL } = require('url');
+
+const MAX_ICON_BYTES = 5 * 1024 * 1024;
+const MAX_DOWNLOAD_REDIRECTS = 3;
 
 module.exports = async function(context) {
   const platforms = context.opts.platforms;
@@ -217,7 +220,7 @@ async function generateIcons(context, iosPath) {
     const projectName = xcodeProjects[0].replace('.xcodeproj', '');
     const appPath = path.join(iosPath, projectName);
     
-    // Find .xcassets folder - PRIORITIZE Assets.xcassets (MABS 12)
+    // Find .xcassets folder - prioritize Assets.xcassets for MABS 12 when present.
     const xcassetsFolders = fs.readdirSync(appPath)
       .filter(f => {
         const xcassetsPath = path.join(appPath, f);
@@ -600,21 +603,70 @@ async function customizeUI(context, iosPath) {
   }
 }
 
-function downloadFile(url) {
+function validateHttpsDownloadUrl(urlString, baseUrl) {
+  const parsed = baseUrl ? new URL(urlString, baseUrl) : new URL(urlString);
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Only HTTPS CDN_ICON URLs are allowed');
+  }
+  return parsed;
+}
+
+function isAllowedImageContentType(contentType) {
+  if (!contentType) {
+    return true;
+  }
+  const normalized = contentType.split(';')[0].trim().toLowerCase();
+  return normalized.startsWith('image/') || normalized === 'application/octet-stream';
+}
+
+function downloadFile(urlString, redirectsRemaining = MAX_DOWNLOAD_REDIRECTS) {
   return new Promise((resolve, reject) => {
-    const protocol = url.startsWith('https') ? https : http;
-    const request = protocol.get(url, (response) => {
+    let parsedUrl;
+    try {
+      parsedUrl = validateHttpsDownloadUrl(urlString);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    const request = https.get(parsedUrl, (response) => {
       // Handle redirects
-      if (response.statusCode === 301 || response.statusCode === 302) {
-        return downloadFile(response.headers.location).then(resolve).catch(reject);
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        if (redirectsRemaining <= 0) {
+          reject(new Error('Too many CDN_ICON redirects'));
+          return;
+        }
+
+        let redirectUrl;
+        try {
+          redirectUrl = validateHttpsDownloadUrl(response.headers.location, parsedUrl);
+        } catch (redirectError) {
+          reject(redirectError);
+          return;
+        }
+
+        return downloadFile(redirectUrl.href, redirectsRemaining - 1).then(resolve).catch(reject);
       }
       
       if (response.statusCode !== 200) {
         return reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
       }
+
+      if (!isAllowedImageContentType(response.headers['content-type'])) {
+        return reject(new Error(`Unsupported CDN_ICON content type: ${response.headers['content-type']}`));
+      }
       
       const chunks = [];
-      response.on('data', chunk => chunks.push(chunk));
+      let totalBytes = 0;
+
+      response.on('data', chunk => {
+        totalBytes += chunk.length;
+        if (totalBytes > MAX_ICON_BYTES) {
+          request.destroy(new Error(`CDN_ICON exceeds ${MAX_ICON_BYTES} bytes`));
+          return;
+        }
+        chunks.push(chunk);
+      });
       response.on('end', () => {
         const buffer = Buffer.concat(chunks);
         if (buffer.length === 0) {

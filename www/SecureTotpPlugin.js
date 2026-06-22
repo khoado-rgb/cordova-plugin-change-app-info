@@ -3,14 +3,14 @@ var exec = require('cordova/exec');
 var SecureTotpPlugin = {
 
     /**
-     * BƯỚC 1: Lấy Public Key của thiết bị (Base64 PEM) để gửi cho Server
+     * Step 1: Get the device public key (Base64 PEM) to send to the server.
      */
     getPublicKey: function(successCallback, errorCallback) {
         exec(successCallback, errorCallback, 'SecureTotpPlugin', 'getPublicKey', []);
     },
 
     /**
-     * BƯỚC 2: Nhận Secret đã bị Server mã hóa bằng Public Key, truyền xuống Native
+     * Step 2: Send the server-encrypted secret to native storage.
      */
     setEncryptedSecret: function(encryptedSecretBase64, successCallback, errorCallback) {
         if (!encryptedSecretBase64 || typeof encryptedSecretBase64 !== 'string' || encryptedSecretBase64.length < 50) {
@@ -36,7 +36,7 @@ var SecureTotpPlugin = {
     },
 
     /**
-     * BƯỚC 3: Lấy mã TOTP 6 số (SHA-256)
+     * Step 3: Get a 6-digit TOTP code (SHA-256).
      */
     getTotpCode: function(expired, timeOffset, successCallback, errorCallback) {
         exec(successCallback, errorCallback, 'SecureTotpPlugin', 'getTotpCode', [expired, timeOffset]);

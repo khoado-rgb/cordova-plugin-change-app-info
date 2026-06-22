@@ -28,12 +28,12 @@
       },
       {
         "name": "SPLASH_BACKGROUND_COLOR",
-        "value": "#001833",
+        "value": "#112233",
         "_comment": "Hex color for native splash screen background. This is the color shown during app launch before webview loads."
       },
       {
         "name": "WEBVIEW_BACKGROUND_COLOR",
-        "value": "#001833",
+        "value": "#112233",
         "_comment": "Optional: Match webview background with splash for smooth transition"
       }
     ]

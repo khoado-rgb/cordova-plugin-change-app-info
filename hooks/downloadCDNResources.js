@@ -3,9 +3,16 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const http = require('http');
 const url = require('url');
 const utils = require('./utils');
+
+const MAX_CSS_BYTES = 512 * 1024;
+const MAX_REDIRECTS = 3;
+const ALLOWED_CSS_CONTENT_TYPES = [
+  'text/css',
+  'text/plain',
+  'application/octet-stream'
+];
 
 module.exports = function(context) {
   return downloadCDNResourcesAsync(context);
@@ -41,7 +48,7 @@ async function downloadCDNResourcesAsync(context) {
 
     // Validate URL format
     try {
-      new url.URL(cdnResource);
+      validateHttpsUrl(cdnResource);
     } catch (urlError) {
       console.log(`❌ Invalid CDN URL format: ${urlError.message}`);
       return;
@@ -88,26 +95,59 @@ async function downloadCDNResourcesAsync(context) {
 /**
  * Download file from URL and return as string
  */
-function downloadFileAsString(urlString) {
+function validateHttpsUrl(urlString, baseUrl) {
+  const parsed = baseUrl ? new url.URL(urlString, baseUrl) : new url.URL(urlString);
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Only HTTPS CDN_RESOURCE URLs are allowed');
+  }
+  return parsed;
+}
+
+function isAllowedContentType(contentType) {
+  if (!contentType) {
+    return true;
+  }
+  const normalized = contentType.split(';')[0].trim().toLowerCase();
+  return ALLOWED_CSS_CONTENT_TYPES.includes(normalized);
+}
+
+function downloadFileAsString(urlString, redirectsRemaining = MAX_REDIRECTS) {
   return new Promise((resolve, reject) => {
-    const protocol = urlString.startsWith('https') ? https : http;
     const timeoutMs = 30000;
     let isResolved = false;
-    let data = '';
 
     try {
-      const request = protocol.get(urlString, { timeout: timeoutMs }, (response) => {
+      const parsedUrl = validateHttpsUrl(urlString);
+      const request = https.get(parsedUrl, { timeout: timeoutMs }, (response) => {
         // Handle redirects
         if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-          console.log(`   Redirecting to: ${response.headers.location}`);
-          return downloadFileAsString(response.headers.location)
+          if (redirectsRemaining <= 0) {
+            if (!isResolved) {
+              isResolved = true;
+              reject(new Error('Too many CDN redirects'));
+            }
+            return;
+          }
+
+          let redirectUrl;
+          try {
+            redirectUrl = validateHttpsUrl(response.headers.location, parsedUrl);
+          } catch (redirectError) {
+            if (!isResolved) {
+              isResolved = true;
+              reject(redirectError);
+            }
+            return;
+          }
+          console.log(`   Redirecting to: ${redirectUrl.href}`);
+          return downloadFileAsString(redirectUrl.href, redirectsRemaining - 1)
             .then(resolve)
             .catch(reject);
         }
 
         // Check for errors
         if (response.statusCode !== 200) {
-          const err = new Error(`HTTP ${response.statusCode} - ${http.STATUS_CODES[response.statusCode] || 'Unknown error'}`);
+          const err = new Error(`HTTP ${response.statusCode} - ${response.statusMessage || 'Unknown error'}`);
           if (!isResolved) {
             isResolved = true;
             reject(err);
@@ -115,8 +155,24 @@ function downloadFileAsString(urlString) {
           return;
         }
 
+        if (!isAllowedContentType(response.headers['content-type'])) {
+          if (!isResolved) {
+            isResolved = true;
+            reject(new Error(`Unsupported CDN content type: ${response.headers['content-type']}`));
+          }
+          return;
+        }
+
+        let totalBytes = 0;
+        const chunks = [];
+
         response.on('data', (chunk) => {
-          data += chunk.toString();
+          totalBytes += chunk.length;
+          if (totalBytes > MAX_CSS_BYTES) {
+            request.destroy(new Error(`CDN CSS exceeds ${MAX_CSS_BYTES} bytes`));
+            return;
+          }
+          chunks.push(chunk);
         });
 
         response.on('error', (err) => {
@@ -129,7 +185,7 @@ function downloadFileAsString(urlString) {
         response.on('end', () => {
           if (!isResolved) {
             isResolved = true;
-            resolve(data);
+            resolve(Buffer.concat(chunks).toString('utf8'));
           }
         });
       });

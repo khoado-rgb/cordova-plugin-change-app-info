@@ -28,14 +28,14 @@ const {
  * Use this when you don't have a Cordova context / ConfigParser instance.
  *
  * @param {string} configPath - Path to config.xml
- * @returns {{ oldColor: string, newColor: string }}
+ * @returns {{ oldColor: string, newColor: string, hasNewColor: boolean }}
  */
 function readColorConfigFromXml(configPath) {
   const defaultOldColor = '#1E1464';
 
   if (!fs.existsSync(configPath)) {
     log(colors.yellow, `⚠️  config.xml not found: ${configPath}`);
-    return { oldColor: defaultOldColor, newColor: defaultOldColor };
+    return { oldColor: defaultOldColor, newColor: defaultOldColor, hasNewColor: false };
   }
 
   try {
@@ -66,6 +66,8 @@ function readColorConfigFromXml(configPath) {
       }
     }
 
+    const hasNewColor = Boolean(newColor);
+
     if (!newColor) {
       newColor = oldColor;
     }
@@ -77,10 +79,10 @@ function readColorConfigFromXml(configPath) {
     log(colors.reset, `   OLD_COLOR (to replace): ${normalizedOldColor}`);
     log(colors.reset, `   BackgroundColor target: ${normalizedNewColor}`);
 
-    return { oldColor: normalizedOldColor, newColor: normalizedNewColor };
+    return { oldColor: normalizedOldColor, newColor: normalizedNewColor, hasNewColor };
   } catch (error) {
     log(colors.yellow, `⚠️  Error reading config.xml: ${error.message}`);
-    return { oldColor: defaultOldColor, newColor: defaultOldColor };
+    return { oldColor: defaultOldColor, newColor: defaultOldColor, hasNewColor: false };
   }
 }
 

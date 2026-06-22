@@ -1,4 +1,4 @@
-# OutSystems Integration Guide
+# OutSystems MABS 12 Integration Guide
 
 ## Setup
 
@@ -17,15 +17,10 @@ Add the plugin JSON to Service Studio > Extensibility Configuration:
       { "name": "ENVIRONMENT", "value": "production" },
       { "name": "CDN_ICON", "value": "https://cdn.example.com/icon-1024.png" },
       { "name": "CDN_RESOURCE", "value": "https://cdn.example.com/app.css" },
-      { "name": "SplashScreenBackgroundColor", "value": "#001833" },
-      { "name": "AndroidWindowSplashScreenBackground", "value": "#001833" },
-      { "name": "BackgroundColor", "value": "#001833" },
-      { "name": "StatusBarBackgroundColor", "value": "#001833" },
       { "name": "TENANT_ID", "value": "1234" },
       { "name": "AutoHideSplashScreen", "value": "true" }
     ],
     "android": [
-      { "name": "WEBVIEW_BACKGROUND_COLOR", "value": "#FFFFFF" },
       { "name": "SplashScreenDelay", "value": "1500" },
       { "name": "FadeSplashScreen", "value": "true" },
       { "name": "FadeSplashScreenDuration", "value": "300" },
@@ -91,6 +86,21 @@ To receive a POST when the build completes:
 
 The `hooks/sendBuildSuccess.js` hook sends a POST request with app name, version, platform, and domain after a successful build.
 
+To send build metadata to an App Distribution endpoint without enabling the Build Success API:
+
+```json
+{
+  "preferences": {
+    "global": [
+      { "name": "APP_DISTRIBUTION_API", "value": "https://api.example.com/app-distribution" },
+      { "name": "APP_DISTRIBUTION_BEARER_TOKEN", "value": "your-token" }
+    ]
+  }
+}
+```
+
+Keep bearer tokens out of source control. Replace placeholder values inside the OutSystems build configuration.
+
 ## SecureTotp in OutSystems
 
 ### Get Public Key
@@ -135,10 +145,10 @@ cordova.plugins.SecureTotpPlugin.getTotpCode(
 
 ## Color Tips
 
-- Set all splash/background colors to the same value for a seamless app launch
-- `WEBVIEW_BACKGROUND_COLOR` controls what shows between splash dismiss and page load
-- If your app is dark-themed, set `WEBVIEW_BACKGROUND_COLOR` to match the splash color (not `#FFFFFF`)
-- iOS falls back through `WEBVIEW_BACKGROUND_COLOR` → `BackgroundColor` → `SplashScreenBackgroundColor` → `#FFFFFF`
+- Color preferences are optional. If omitted, the plugin preserves the default OutSystems/MABS app colors.
+- Set all splash/background colors to the same value only when you want an explicit color override.
+- `WEBVIEW_BACKGROUND_COLOR` controls what shows between splash dismiss and page load when explicitly configured.
+- Invalid color values are ignored instead of falling back to a hardcoded color.
 
 ## Common Issues
 
@@ -146,6 +156,7 @@ cordova.plugins.SecureTotpPlugin.getTotpCode(
 |---|---|
 | Old app name showing | iOS caches aggressively — `ios-cache-clear.js` runs automatically |
 | Icon not updating | Ensure `CDN_ICON` URL returns a 1024×1024 PNG with no redirect |
-| Build notification not sent | Set `ENABLE_BUILD_NOTIFICATION` to `"true"` |
+| Build notification not sent | Set `ENABLE_BUILD_NOTIFICATION` to `"true"` and configure `BUILD_SUCCESS_API_URL` |
+| App Distribution callback not sent | Configure `APP_DISTRIBUTION_API`; `ENABLE_BUILD_NOTIFICATION` is not required |
 | Config not available | Check `window.CORDOVA_BUILD_CONFIG` after `deviceready` |
 | White flash between splash and app | Set `WEBVIEW_BACKGROUND_COLOR` to match splash color |

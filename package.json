@@ -1,12 +1,12 @@
 {
   "name": "cordova-plugin-change-app-info",
-  "version": "2.9.11",
+  "version": "2.9.21",
   "description": "Cordova plugin to change app info with iOS optimization, gradient splash screens, and JSON config storage",
   "main": "index.js",
   "scripts": {
     "setup": "node scripts/auto-install-deps.js",
     "cleanup:ios": "node scripts/cleanup-old-ios-hooks.js",
-    "test": "echo \"No tests specified\" && exit 0"
+    "test": "find hooks scripts www -name '*.js' -exec node --check {} \\; && node -e \"require.resolve('plist')\""
   },
   "repository": {
     "type": "git",
@@ -35,6 +35,9 @@
     "url": "https://github.com/vnkhoado/cordova-plugin-change-app-info/issues"
   },
   "homepage": "https://github.com/vnkhoado/cordova-plugin-change-app-info#readme",
+  "dependencies": {
+    "plist": "^3.1.0"
+  },
   "peerDependencies": {
     "sharp": "^0.32.0 || ^0.33.0",
     "jimp": "^1.6.0"

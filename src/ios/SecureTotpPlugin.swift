@@ -1,29 +1,34 @@
 import Foundation
 import Security
-import WebKit // <--- BẮT BUỘC THÊM DÒNG NÀY ĐỂ DÙNG WKWEBVIEW
+import WebKit
 
-// CÁCH IMPORT CHUẨN XÁC NHẤT CHO CORDOVA IOS TRONG MABS 12
+// Cordova iOS import for MABS 12 builds
 #if canImport(Cordova)
 import Cordova
 #endif
 
 @objc(SecureTotpPlugin) 
 class SecureTotpPlugin: CDVPlugin {
+    private let minTotpPeriod = 5
+    private let maxTotpPeriod = 300
+    private let maxTimeOffsetSeconds = 86400
     
     // =========================================================================
-    // HÀM PHỤ TRỢ: KIỂM TRA ORIGIN BẢO MẬT (CHỐNG MÃ ĐỘC XSS)
+    // Helper: validate the current WebView origin.
     // =========================================================================
-    private func isSafeOrigin() -> Bool {
-        guard let wkWebView = self.webView as? WKWebView,
-              let url = wkWebView.url else {
+    private func isSafeOrigin(_ url: URL?) -> Bool {
+        guard let url = url else {
             return false
         }
         
         let scheme = url.scheme?.lowercased() ?? ""
         let host = url.host?.lowercased() ?? ""
         
-        // Local file URLs are always safe
-        if scheme == "file" { return true }
+        if scheme == "file" {
+            let filePath = url.standardizedFileURL.path
+            let bundlePath = Bundle.main.bundleURL.standardizedFileURL.path
+            return filePath == bundlePath || filePath.hasPrefix(bundlePath + "/")
+        }
         
         // Known safe schemes
         if scheme == "outsystems" || scheme == "ionic" { return true }
@@ -42,18 +47,48 @@ class SecureTotpPlugin: CDVPlugin {
         return false
     }
 
-    // =========================================================================
-    // ACTION 1: LẤY PUBLIC KEY
-    // =========================================================================
-    @objc(getPublicKey:)
-    func getPublicKey(command: CDVInvokedUrlCommand) {
-        self.commandDelegate.run(inBackground: {
-            guard self.isSafeOrigin() else {
-                let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "BẢO MẬT: Lệnh bị từ chối do sai Origin.")
+    private func runIfSafeOrigin(command: CDVInvokedUrlCommand, _ work: @escaping () -> Void) {
+        DispatchQueue.main.async {
+            let currentURL = (self.webView as? WKWebView)?.url
+            guard self.isSafeOrigin(currentURL) else {
+                let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "SECURITY: Command rejected due to invalid Origin.")
                 self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
                 return
             }
-            
+
+            self.commandDelegate.run(inBackground: work)
+        }
+    }
+
+    private func intArgument(_ value: Any?, defaultValue: Int) -> Int {
+        if let intValue = value as? Int {
+            return intValue
+        }
+        if let numberValue = value as? NSNumber {
+            return numberValue.intValue
+        }
+        if let stringValue = value as? String, let intValue = Int(stringValue) {
+            return intValue
+        }
+        return defaultValue
+    }
+
+    private func validateTotpArgs(expired: Int, offset: Int) -> String? {
+        if expired < minTotpPeriod || expired > maxTotpPeriod {
+            return "Invalid TOTP period. Allowed range: \(minTotpPeriod)-\(maxTotpPeriod) seconds."
+        }
+        if offset < -maxTimeOffsetSeconds || offset > maxTimeOffsetSeconds {
+            return "Invalid TOTP timeOffset. Allowed range: +/-\(maxTimeOffsetSeconds) seconds."
+        }
+        return nil
+    }
+
+    // =========================================================================
+    // ACTION 1: Get the device public key.
+    // =========================================================================
+    @objc(getPublicKey:)
+    func getPublicKey(command: CDVInvokedUrlCommand) {
+        runIfSafeOrigin(command: command) {
             if let pubKey = SecureTotpManager.getDevicePublicKey() {
                 let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: pubKey)
                 self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
@@ -61,21 +96,15 @@ class SecureTotpPlugin: CDVPlugin {
                 let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Lỗi sinh khóa RSA iOS")
                 self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
             }
-        })
+        }
     }
     
     // =========================================================================
-    // ACTION 2: LƯU SECRET ĐÃ MÃ HÓA TỪ SERVER
+    // ACTION 2: Store the server-encrypted secret.
     // =========================================================================
     @objc(setEncryptedSecret:)
     func setEncryptedSecret(command: CDVInvokedUrlCommand) {
-        self.commandDelegate.run(inBackground: {
-            guard self.isSafeOrigin() else {
-                let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "BẢO MẬT: Lệnh bị từ chối do sai Origin.")
-                self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
-                return
-            }
-            
+        runIfSafeOrigin(command: command) {
             let encryptedSecret = command.arguments.first as? String ?? ""
             if encryptedSecret.isEmpty {
                 let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Dữ liệu mã hóa không được để trống")
@@ -90,29 +119,28 @@ class SecureTotpPlugin: CDVPlugin {
                 let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Lỗi giải mã trên iOS. Khóa RSA có thể không khớp.")
                 self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
             }
-        })
+        }
     }
     
     // =========================================================================
-    // ACTION 3: LẤY MÃ TOTP 6 SỐ
+    // ACTION 3: Get a 6-digit TOTP code.
     // =========================================================================
     @objc(getTotpCode:)
     func getTotpCode(command: CDVInvokedUrlCommand) {
-        self.commandDelegate.run(inBackground: {
-            guard self.isSafeOrigin() else {
-                let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "BẢO MẬT: Lệnh bị từ chối do sai Origin.")
-                self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
-                return
-            }
-            
+        runIfSafeOrigin(command: command) {
             guard command.arguments.count >= 2 else {
                 let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Missing required arguments: expired, timeOffset")
                 self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
                 return
             }
             
-            let expired = command.arguments[0] as? Int ?? 30
-            let offset = command.arguments[1] as? Int ?? 0
+            let expired = self.intArgument(command.arguments[0], defaultValue: 30)
+            let offset = self.intArgument(command.arguments[1], defaultValue: 0)
+            if let validationError = self.validateTotpArgs(expired: expired, offset: offset) {
+                let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: validationError)
+                self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
+                return
+            }
             
             if let code = SecureTotpManager.generateTotp(expired: expired, timeOffset: offset) {
                 let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: code)
@@ -121,6 +149,6 @@ class SecureTotpPlugin: CDVPlugin {
                 let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Không thể sinh mã TOTP. Vui lòng kiểm tra lại Secret Key.")
                 self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
             }
-        })
+        }
     }
 }

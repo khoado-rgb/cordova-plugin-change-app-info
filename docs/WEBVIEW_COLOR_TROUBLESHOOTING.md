@@ -13,20 +13,20 @@ When the splash screen hides, the WebView's background color is visible before t
 Set `WEBVIEW_BACKGROUND_COLOR` to match your splash screen color:
 
 ```json
-{ "name": "WEBVIEW_BACKGROUND_COLOR", "value": "#001833" }
+{ "name": "WEBVIEW_BACKGROUND_COLOR", "value": "#112233" }
 ```
 
 ## How It Works
 
 ### Android
 
-`CSSInjector.java` reads `WEBVIEW_BACKGROUND_COLOR` from preferences during `pluginInitialize()`:
+`CSSInjector.java` reads color preferences during `pluginInitialize()`:
 
 ```
-Fallback chain: WEBVIEW_BACKGROUND_COLOR → BackgroundColor → SplashScreenBackgroundColor → #FFFFFF
+Preference chain: BackgroundColor → SplashScreenBackgroundColor → AndroidWindowSplashScreenBackground → WEBVIEW_BACKGROUND_COLOR
 ```
 
-It sets the WebView's native background color using `View.setBackgroundColor()` and injects CSS to match.
+It sets the WebView's native background color using `View.setBackgroundColor()` and injects CSS to match only when a valid color is explicitly configured. If no color is configured, default OutSystems/MABS app colors are preserved.
 
 The color is validated by `isValidHexColor()` using the regex pattern `^#?([A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$`. Invalid colors are ignored.
 
@@ -36,7 +36,7 @@ The color is validated by `isValidHexColor()` using the regex pattern `^#?([A-Fa
 1. Sets `wkWebView.backgroundColor` and `wkWebView.scrollView.backgroundColor`
 2. Installs a `WKUserScript` that sets `document.documentElement.style.backgroundColor` at document start
 
-The color is validated by an `NSRegularExpression` matching `^#?[A-Fa-f0-9]{6}([A-Fa-f0-9]{2})?$`. Invalid colors fall back to `#FFFFFF`.
+The color is validated by an `NSRegularExpression` matching `^#?[A-Fa-f0-9]{6}([A-Fa-f0-9]{2})?$`. Invalid colors are ignored so default app colors are preserved.
 
 ## Format
 
@@ -58,5 +58,5 @@ You should see a red flash between splash and page load. Once confirmed, set it 
 ## Tips
 
 - For dark-themed apps, set `WEBVIEW_BACKGROUND_COLOR` to match `SplashScreenBackgroundColor`
-- For light-themed apps, `#FFFFFF` (the default) is usually fine
+- Omit color preferences when you want to keep the default OutSystems/MABS app colors
 - The Android `preferences.android` section should include this preference since it's typically platform-specific

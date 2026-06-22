@@ -20,21 +20,25 @@ class SecureTotpManager {
     }
     
     // =========================================================================
-    // 1. LẤY PUBLIC KEY ĐỊNH DẠNG X.509 NATIVE (KHỚP 100% VỚI ANDROID/C#)
+    // 1. Export the public key in X.509/SPKI-compatible PEM format.
     // =========================================================================
     static func getDevicePublicKey() -> String? {
         guard let privateKey = getOrGenerateRsaPrivateKey() else { return nil }
         guard let publicKey = SecKeyCopyPublicKey(privateKey) else { return nil }
         
-        // Sử dụng thuật toán xuất định dạng spki (SubjectPublicKeyInfo - chính là X.509)
-        // Đây là cách an toàn nhất vì Apple tự tính toán các byte ASN.1 chuẩn xác
+        // SecKey returns the raw RSA public key body; the SPKI header is added below.
         var error: Unmanaged<CFError>?
         guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &error) as Data? else {
             return nil
         }
+
+        // The SPKI header below is valid only for a 2048-bit RSA public key.
+        guard publicKeyData.count == 270 else {
+            print("[TOTP_ERROR] Unexpected RSA public key size: \(publicKeyData.count) bytes")
+            return nil
+        }
         
-        // Nếu Server C# của bạn dùng thư viện đời cũ và vẫn lỗi với đoạn trên, 
-        // ta sẽ dùng "Phép thuật 24-byte" nhưng thêm bước kiểm tra bit đệm:
+        // Build a SubjectPublicKeyInfo wrapper for RSA-2048 public keys.
         
         let header: [UInt8] = [
             0x30, 0x82, 0x01, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
@@ -49,12 +53,12 @@ class SecureTotpManager {
     }
     
     // =========================================================================
-    // 2. SINH KHÓA RSA TRONG KEYCHAIN (ĐÃ BỎ ACCES CONTROL KHẮT KHE)
+    // 2. Generate or load an RSA key pair from Keychain.
     // =========================================================================
     private static func getOrGenerateRsaPrivateKey() -> SecKey? {
         guard let tag = rsaKeyTag.data(using: .utf8) else { return nil }
         
-        // 1. Thử lấy khóa cũ
+        // 1. Try to load an existing key.
         let queryGet: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrApplicationTag as String: tag,
@@ -67,7 +71,7 @@ class SecureTotpManager {
             return (item as! SecKey)
         }
         
-        // 2. Xóa tàn dư cũ để chống kẹt Duplicate
+        // 2. Remove stale items to avoid duplicate-key failures.
         let queryDelete: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrApplicationTag as String: tag,
@@ -75,14 +79,14 @@ class SecureTotpManager {
         ]
         SecItemDelete(queryDelete as CFDictionary)
         
-        // 3. Tạo mới với cấu hình TỐI GIẢN NHẤT (Vượt ải Apple 100%)
+        // 3. Create a new persistent RSA key with a minimal compatible config.
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
             kSecAttrKeySizeInBits as String: 2048,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
                 kSecAttrApplicationTag as String: tag,
-                // DÙNG TRỰC TIẾP CỜ NÀY THAY VÌ SEC_ACCESS_CONTROL
+                // Use the accessibility attribute directly for broad compatibility.
                 kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             ]
         ]
@@ -99,7 +103,7 @@ class SecureTotpManager {
     }
     
     // =========================================================================
-    // 3. GIẢI MÃ SECRET BẰNG PRIVATE KEY VÀ LƯU VÀO KEYCHAIN
+    // 3. Decrypt the secret with the private key and save it to Keychain.
     // =========================================================================
     static func decryptAndSaveSecret(_ encryptedSecretBase64: String) -> Bool {
         guard let cipherData = Data(base64Encoded: encryptedSecretBase64, options: []) else { return false }
@@ -120,12 +124,12 @@ class SecureTotpManager {
     }
     
     // =========================================================================
-    // 4. LƯU SECRET VÀO KEYCHAIN
+    // 4. Store the secret in Keychain.
     // =========================================================================
     private static func saveToAesKeychain(_ secret: String) -> Bool {
         guard let data = secret.data(using: .utf8) else { return false }
         
-        // Xóa Key cũ trước khi thêm mới để tránh lỗi kẹt Duplicate Key
+        // Remove the old item first to avoid duplicate-key failures.
         let queryDelete: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceNameAes,
@@ -152,13 +156,13 @@ class SecureTotpManager {
     }
     
     // =========================================================================
-    // 5. SINH MÃ TOTP 6 SỐ BẰNG CRYPTOKIT (BĂM HMAC-SHA256 CHUẨN)
+    // 5. Generate a 6-digit TOTP code with CryptoKit HMAC-SHA256.
     // =========================================================================
     static func generateTotp(expired: Int, timeOffset: Int) -> String? {
         // Validate time period to prevent division by zero
         guard expired > 0 else { return nil }
         
-        // Lấy Secret từ Keychain
+        // Read the secret from Keychain.
         let queryGet: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceNameAes,
@@ -174,20 +178,20 @@ class SecureTotpManager {
               let retrievedData = dataTypeRef as? Data,
               let secretString = String(data: retrievedData, encoding: .utf8) else { return nil }
         
-        // 1. Giải mã Base32 thành mảng Byte
+        // 1. Decode the Base32 secret into bytes.
         guard let keyData = base32Decode(secretString) else { return nil }
         
-        // 2. Tính toán thời gian (Time Step)
+        // 2. Calculate the time step.
         let epoch = Int(Date().timeIntervalSince1970) + timeOffset
         var timeStep = UInt64(epoch / expired).bigEndian
         let timeData = Data(bytes: &timeStep, count: MemoryLayout<UInt64>.size)
         
-        // 3. Băm HMAC-SHA256 bằng CryptoKit native
+        // 3. Compute HMAC-SHA256 with CryptoKit.
         let symmetricKey = SymmetricKey(data: keyData)
         let mac = HMAC<SHA256>.authenticationCode(for: timeData, using: symmetricKey)
-        let hash = Data(mac) // Trả về mảng 32 bytes
+        let hash = Data(mac) // 32-byte hash output
         
-        // 4. Dynamic Truncation (Cắt ngắn động) theo chuẩn RFC 6238
+        // 4. Dynamic truncation according to RFC 6238.
         let offset = Int(hash[hash.count - 1] & 0x0f)
         let binary = ((Int(hash[offset]) & 0x7f) << 24) |
                      ((Int(hash[offset + 1]) & 0xff) << 16) |
@@ -199,7 +203,7 @@ class SecureTotpManager {
     }
     
     // =========================================================================
-    // UTILITY: GIẢI MÃ BASE32 (DỊCH BIT CHUẨN QUỐC TẾ)
+    // UTILITY: Base32 decoder.
     // =========================================================================
     private static func base32Decode(_ base32String: String) -> Data? {
         let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
@@ -213,11 +217,11 @@ class SecureTotpManager {
             guard let index = alphabet.firstIndex(of: char) else { continue }
             let val = UInt32(alphabet.distance(from: alphabet.startIndex, to: index))
             
-            // Dịch 5 bit mới vào bộ đệm
+            // Shift the next 5 bits into the buffer.
             buffer = (buffer << 5) | val
             bitsLeft += 5
             
-            // Cứ đủ 8 bit thì gom thành 1 Byte đẩy vào mảng Data
+            // Emit one byte whenever the buffer has at least 8 bits.
             if bitsLeft >= 8 {
                 let byte = UInt8((buffer >> (bitsLeft - 8)) & 0xFF)
                 result.append(byte)

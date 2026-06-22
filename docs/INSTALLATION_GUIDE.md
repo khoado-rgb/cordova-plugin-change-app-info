@@ -14,7 +14,7 @@ Pin a version for reproducible builds:
 cordova plugin add https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.9.20
 ```
 
-### OutSystems MABS
+### OutSystems MABS 12
 
 Add to the Extensibility Configuration in Service Studio:
 
@@ -44,11 +44,10 @@ Add to the Extensibility Configuration in Service Studio:
 - `sharp` ^0.33.0 — recommended, fast native library
 - `jimp` ^1.6.0 — pure JavaScript fallback
 
-These are auto-installed by `scripts/auto-install-deps.js` during the first build. No manual installation needed for MABS builds.
+These are auto-installed by `scripts/auto-install-deps.js` during the first build. No manual installation needed for MABS 12 builds.
 
 ### Android
-- `androidx.security:security-crypto:1.1.0-alpha06` — EncryptedSharedPreferences for TOTP
-- `commons-codec:commons-codec:1.15` — HMAC utilities
+- `androidx.security:security-crypto:1.1.0` — EncryptedSharedPreferences for TOTP
 
 ### iOS
 - `Security.framework` — Keychain and SecKey

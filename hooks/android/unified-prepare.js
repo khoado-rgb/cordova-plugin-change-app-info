@@ -11,10 +11,11 @@
  *   1. aggressive-color-replace  — Global hex color replacement
  *   2. update-splash-theme-color — Splash theme color sync
  *   3. removeConflictingStringsXml — Remove duplicate strings.xml
- *   4. changeAppInfo             — Update app name & version
- *   5. generateIcons             — Download & resize CDN icons
- *   6. customizeWebview          — Set webview background color
- *   7. update-android-small-icon — Copy notification icons
+ *   4. configure-backup-rules    — Exclude device-bound TOTP prefs from backup
+ *   5. changeAppInfo             — Update app name & version
+ *   6. generateIcons             — Download & resize CDN icons
+ *   7. customizeWebview          — Set webview background color
+ *   8. update-android-small-icon — Copy notification icons
  *
  * Hooks that remain separate (shared with iOS):
  *   - injectBuildInfo.js
@@ -22,9 +23,11 @@
  */
 
 const STEPS = [
+  { name: 'Install build-extras',       hook: './install-build-extras' },
   { name: 'Aggressive color replace',   hook: './aggressive-color-replace' },
   { name: 'Update splash theme color',  hook: '../update-splash-theme-color' },
   { name: 'Remove conflicting strings', hook: '../removeConflictingStringsXml' },
+  { name: 'Configure backup rules',     hook: './configure-backup-rules' },
   { name: 'Change app info',            hook: '../changeAppInfo' },
   { name: 'Generate icons',             hook: '../generateIcons' },
   { name: 'Customize webview',          hook: '../customizeWebview' },

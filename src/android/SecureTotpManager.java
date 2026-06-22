@@ -25,7 +25,7 @@ public class SecureTotpManager {
     private static final String TAG = "SecureTotpPlugin";
 
     // =========================================================================
-    // ĐỊNH DANH ĐỘNG (BẢO MẬT MÃ NGUỒN KHI PUBLIC)
+    // Dynamic identifiers derived from the app package name.
     // =========================================================================
     private static String getRsaKeyAlias(Context context) {
         return context.getPackageName() + ".totp.rsa.v1";
@@ -83,7 +83,7 @@ public class SecureTotpManager {
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
                 .setKeySize(2048);
 
-        // Ưu tiên dùng chip bảo mật phần cứng StrongBox nếu thiết bị hỗ trợ
+        // Prefer hardware-backed StrongBox when the device supports it.
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
             builder.setIsStrongBoxBacked(true);
             try {
@@ -150,7 +150,7 @@ public class SecureTotpManager {
     public static void saveEncryptedSecret(Context context, String encryptedSecretBase64) throws Exception {
         LogUtil.d(context, TAG, "Starting to decrypt Secret Key...");
 
-        // 1. Lấy Private Key từ Keystore
+        // 1. Load the private key from Android Keystore.
         KeyStore keyStore = KeyStore.getInstance(ANDROID_KEY_STORE);
         keyStore.load(null);
         java.security.PrivateKey privateKey = (java.security.PrivateKey) keyStore.getKey(getRsaKeyAlias(context), null);
@@ -175,7 +175,7 @@ public class SecureTotpManager {
             java.util.Arrays.fill(encryptedBytes, (byte) 0);
         }
 
-        // 4. LƯU BẢO MẬT CẤP CAO (MÃ HÓA AES-256)
+        // 4. Store the secret with encrypted shared preferences.
         SharedPreferences sharedPreferences = getEncryptedPrefs(context);
 
         sharedPreferences.edit().putString(getSecretKeyAccount(context), rawSecret).apply();
@@ -194,7 +194,7 @@ public class SecureTotpManager {
             throw new Exception("Invalid TOTP period. Must be a positive integer.");
         }
 
-        // 1. Đọc Secret Key từ kho lưu trữ đã mã hóa
+        // 1. Read the secret key from encrypted storage.
         SharedPreferences sharedPreferences = getEncryptedPrefs(context);
 
         String secret = sharedPreferences.getString(getSecretKeyAccount(context), null);
@@ -203,20 +203,20 @@ public class SecureTotpManager {
             throw new Exception("Secret Key not found. Please register device first.");
         }
 
-        // 2. Giải mã chuỗi Secret (Base32) thành mảng Byte
+        // 2. Decode the Base32 secret into bytes.
         byte[] keyBytes = base32Decode(secret);
         if (keyBytes == null || keyBytes.length == 0) {
             throw new Exception("Invalid Base32 secret.");
         }
 
-        // 3. Tính toán Time Step (Cửa sổ thời gian)
+        // 3. Calculate the time step.
         long currentUnixTime = (System.currentTimeMillis() / 1000L) + timeOffset;
         long timeStep = currentUnixTime / expired;
         
-        // Chuyển Time Step thành mảng byte (8 bytes - Big Endian)
+        // Convert the time step to an 8-byte big-endian array.
         byte[] timeBytes = ByteBuffer.allocate(8).putLong(timeStep).array();
 
-        // 4. Thuật toán HMAC-SHA256 (Khớp với thuật toán iOS và C#)
+        // 4. Compute HMAC-SHA256, matching iOS and server behavior.
         Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(keyBytes, "HmacSHA256"));
         byte[] hash = mac.doFinal(timeBytes);
@@ -224,7 +224,7 @@ public class SecureTotpManager {
         // Zero sensitive key material after HMAC computation
         java.util.Arrays.fill(keyBytes, (byte) 0);
 
-        // 5. Dynamic Truncation (Trích xuất 6 số từ mã Hash)
+        // 5. Dynamic truncation to extract a 6-digit code from the hash.
         int offset = hash[hash.length - 1] & 0x0F;
         int binary = ((hash[offset] & 0x7F) << 24) |
                      ((hash[offset + 1] & 0xFF) << 16) |
@@ -233,7 +233,7 @@ public class SecureTotpManager {
 
         int otp = binary % 1000000;
         
-        // Format thành chuỗi 6 ký tự
+        // Format as a 6-character string.
         return String.format("%06d", otp);
     }
 

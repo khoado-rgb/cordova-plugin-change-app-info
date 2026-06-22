@@ -10,9 +10,12 @@ import org.json.JSONException;
 public class SecureTotpPlugin extends CordovaPlugin {
 
     private static final String TAG = "SecureTotpPlugin";
+    private static final int MIN_TOTP_PERIOD_SECONDS = 5;
+    private static final int MAX_TOTP_PERIOD_SECONDS = 300;
+    private static final int MAX_TIME_OFFSET_SECONDS = 86400;
 
     /**
-     * Hàm phụ trợ: Kiểm tra Origin (Chống XSS)
+     * Helper: validate the current WebView origin.
      */
     private boolean isSafeOrigin(String currentUrl) {
         if (currentUrl == null || currentUrl.isEmpty()) return false;
@@ -46,10 +49,20 @@ public class SecureTotpPlugin extends CordovaPlugin {
         return false;
     }
 
+    private String validateTotpArgs(int expired, int timeOffset) {
+        if (expired < MIN_TOTP_PERIOD_SECONDS || expired > MAX_TOTP_PERIOD_SECONDS) {
+            return "Invalid TOTP period. Allowed range: " + MIN_TOTP_PERIOD_SECONDS + "-" + MAX_TOTP_PERIOD_SECONDS + " seconds.";
+        }
+        if (timeOffset < -MAX_TIME_OFFSET_SECONDS || timeOffset > MAX_TIME_OFFSET_SECONDS) {
+            return "Invalid TOTP timeOffset. Allowed range: +/-" + MAX_TIME_OFFSET_SECONDS + " seconds.";
+        }
+        return null;
+    }
+
     @Override
     public boolean execute(final String action, final JSONArray args, final CallbackContext callbackContext) throws JSONException {
         
-        // 1. CHUYỂN TOÀN BỘ SANG UI THREAD ĐỂ LẤY URL AN TOÀN
+        // 1. Switch to the UI thread before reading the WebView URL.
         cordova.getActivity().runOnUiThread(new Runnable() {
             public void run() {
                 try {
@@ -58,14 +71,14 @@ public class SecureTotpPlugin extends CordovaPlugin {
                     
                     LogUtil.d(context, TAG, "Action [" + action + "] called from URL: " + currentUrl);
                     
-                    // 2. CHẶN ĐỨNG NẾU SAI ORIGIN (Bảo vệ cho TẤT CẢ các Action)
+                    // 2. Reject every action from an unsafe origin.
                     if (!isSafeOrigin(currentUrl)) {
                         LogUtil.e(context, TAG, "Blocked! Invalid Origin: " + currentUrl);
                         callbackContext.error("SECURITY: Command rejected due to invalid Origin.");
                         return; 
                     }
 
-                    // 3. RẼ NHÁNH XỬ LÝ CHO TỪNG ACTION (Đẩy xuống Background Thread)
+                    // 3. Dispatch each native action to a background thread.
                     if ("getPublicKey".equals(action)) {
                         cordova.getThreadPool().execute(new Runnable() {
                             public void run() {
@@ -88,7 +101,7 @@ public class SecureTotpPlugin extends CordovaPlugin {
                         cordova.getThreadPool().execute(new Runnable() {
                             public void run() {
                                 try {
-                                    // Gọi hàm giải mã và lưu xuống máy (Bạn nhớ thêm hàm này vào Manager nhé)
+                                    // Decrypt and store the secret on the device.
                                     SecureTotpManager.saveEncryptedSecret(context, encryptedSecret);
                                     callbackContext.success("LƯU_THÀNH_CÔNG"); 
                                 } catch (Exception e) {
@@ -105,10 +118,15 @@ public class SecureTotpPlugin extends CordovaPlugin {
                         }
                         final int expired = args.getInt(0);
                         final int timeOffset = args.getInt(1);
+                        String validationError = validateTotpArgs(expired, timeOffset);
+                        if (validationError != null) {
+                            callbackContext.error(validationError);
+                            return;
+                        }
                         cordova.getThreadPool().execute(new Runnable() {
                             public void run() {
                                 try {
-                                    // Gọi hàm sinh mã 6 số (Bạn nhớ thêm hàm này vào Manager nhé)
+                                    // Generate a 6-digit TOTP code.
                                     String totpCode = SecureTotpManager.generateTotp(context, expired, timeOffset);
                                     callbackContext.success(totpCode); 
                                 } catch (Exception e) {
@@ -119,7 +137,7 @@ public class SecureTotpPlugin extends CordovaPlugin {
                         });
                     } 
                     else {
-                        // Action không tồn tại
+                        // Unknown action
                         callbackContext.error("Action not found: " + action);
                     }
 

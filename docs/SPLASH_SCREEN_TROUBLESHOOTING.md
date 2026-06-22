@@ -8,10 +8,10 @@ Colors must be in `#RRGGBB` hex format:
 
 ```xml
 <!-- Correct -->
-<preference name="SplashScreenBackgroundColor" value="#001833" />
+<preference name="SplashScreenBackgroundColor" value="#112233" />
 
 <!-- Wrong -->
-<preference name="SplashScreenBackgroundColor" value="001833" />
+<preference name="SplashScreenBackgroundColor" value="112233" />
 <preference name="SplashScreenBackgroundColor" value="rgb(0,24,51)" />
 <preference name="SplashScreenBackgroundColor" value="darkblue" />
 ```
@@ -21,10 +21,10 @@ Colors must be in `#RRGGBB` hex format:
 For consistent behavior across platforms, set all four:
 
 ```json
-{ "name": "SplashScreenBackgroundColor", "value": "#001833" },
-{ "name": "AndroidWindowSplashScreenBackground", "value": "#001833" },
-{ "name": "BackgroundColor", "value": "#001833" },
-{ "name": "StatusBarBackgroundColor", "value": "#001833" }
+{ "name": "SplashScreenBackgroundColor", "value": "#112233" },
+{ "name": "AndroidWindowSplashScreenBackground", "value": "#112233" },
+{ "name": "BackgroundColor", "value": "#112233" },
+{ "name": "StatusBarBackgroundColor", "value": "#112233" }
 ```
 
 ### Android-Specific
@@ -45,12 +45,12 @@ If you see a brief white flash after the splash screen dismisses:
 
 1. Set `WEBVIEW_BACKGROUND_COLOR` to match the splash color:
    ```json
-   { "name": "WEBVIEW_BACKGROUND_COLOR", "value": "#001833" }
+   { "name": "WEBVIEW_BACKGROUND_COLOR", "value": "#112233" }
    ```
 
 2. The `CSSInjector` sets the webview background color before any page loads
 
-3. iOS fallback chain: `WEBVIEW_BACKGROUND_COLOR` → `BackgroundColor` → `SplashScreenBackgroundColor` → `#FFFFFF`
+3. If no color preference is configured, iOS preserves the default OutSystems/MABS app colors
 
 ## Gradient Splash Screens
 

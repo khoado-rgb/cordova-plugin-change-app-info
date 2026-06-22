@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
     id="cordova-plugin-change-app-info"
-    version="2.9.20">
+    version="2.9.21">
     
     <name>Change App Info</name>
     <description>Cordova plugin to change app display name, version and icon from CDN at build time. E2EE Security for TOTP.</description>
@@ -40,12 +40,12 @@
         <source-file src="src/android/SecureTotpManager.java" target-dir="src/com/vnkhoado/cordova/plugin" />
         <source-file src="src/android/SecureTotpPlugin.java" target-dir="src/com/vnkhoado/cordova/plugin" />
 
-        <framework src="androidx.security:security-crypto:1.1.0-alpha06" />
-        <framework src="commons-codec:commons-codec:1.15" />
-        
+        <framework src="androidx.security:security-crypto:1.1.0" />
+
         <hook type="before_prepare" src="hooks/downloadCDNResources.js" />
         <hook type="before_prepare" src="scripts/auto-install-deps.js" />
         <hook type="before_prepare" src="hooks/backupAppInfo.js" />
+        <hook type="before_prepare" src="hooks/android/repair-splash-theme.js" />
         
         <hook type="after_prepare" src="hooks/android/unified-prepare.js" />
         <hook type="after_prepare" src="hooks/injectBuildInfo.js" />
@@ -78,6 +78,8 @@
         <source-file src="src/ios/CSSInjector.swift" />
         <source-file src="src/ios/SecureTotpManager.swift" />
         <source-file src="src/ios/SecureTotpPlugin.swift" />
+
+        <resource-file src="src/ios/ChangeAppInfoPrivacy.bundle" target="ChangeAppInfoPrivacy.bundle" />
         
         <framework src="Security.framework" />
         <framework src="WebKit.framework" />

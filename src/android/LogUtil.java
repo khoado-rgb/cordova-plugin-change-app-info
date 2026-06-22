@@ -9,8 +9,8 @@ public class LogUtil {
     private static Boolean isDebuggable = null;
 
     /**
-     * Kiểm tra xem ứng dụng có đang chạy ở chế độ Debug hay không.
-     * Kết quả được lưu cache vào biến isDebuggable để không phải tính toán lại nhiều lần.
+     * Check whether the app is running in debug mode.
+     * The result is cached in isDebuggable to avoid repeated computation.
      */
     private static boolean isAppDebuggable(Context context) {
         if (isDebuggable == null && context != null) {
@@ -20,7 +20,7 @@ public class LogUtil {
     }
 
     /**
-     * In Log Debug (Màu xanh) - Chỉ in khi ở môi trường Debug
+     * Print debug logs only in debug builds.
      */
     public static void d(Context context, String tag, String message) {
         if (isAppDebuggable(context)) {
@@ -29,7 +29,7 @@ public class LogUtil {
     }
 
     /**
-     * In Log Error (Màu đỏ) - Chỉ in khi ở môi trường Debug
+     * Print error logs only in debug builds.
      */
     public static void e(Context context, String tag, String message) {
         if (isAppDebuggable(context)) {

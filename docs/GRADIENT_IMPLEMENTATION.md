@@ -45,7 +45,7 @@ linear-gradient(angle, color1 position1, color2 position2, ...)
 ```
 linear-gradient(135deg, #667eea 0%, #764ba2 100%)
 linear-gradient(to bottom, #0f0c29, #302b63, #24243e)
-linear-gradient(180deg, #001833 0%, #003366 50%, #001833 100%)
+linear-gradient(180deg, #112233 0%, #003366 50%, #112233 100%)
 ```
 
 ## How It Works

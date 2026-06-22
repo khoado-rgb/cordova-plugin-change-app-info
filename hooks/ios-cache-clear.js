@@ -118,9 +118,8 @@ function clearIOSCache(context) {
     );
     
     if (fs.existsSync(iconPath)) {
-      if (executeCommand(`rm -rf "${iconPath}"`, 'Clear AppIcon cache')) {
-        cleared++;
-      }
+      log(colors.green, '  ✅ AppIcon cache preserved (after_prepare will replace icons after successful generation)');
+      cleared++;
     } else {
       log(colors.green, '  ✅ Icon cache path not found (will regenerate)');
       cleared++;

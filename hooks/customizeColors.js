@@ -84,78 +84,116 @@ function getStylesPath(root) {
  * Customize Android splash & webview colors
  * ONLY touches named splash colors, NOT hex values
  * UPDATED: Supports both old and new Cordova file naming
+ *
+ * IMPORTANT: Legacy names (splash_background, webview_background) go ONLY in
+ * colors.xml. Cordova cdv_* names go ONLY in cdv_colors.xml. Mixing them
+ * causes "Duplicate resources" build failures on Android.
  */
 function customizeAndroidColors(root, backgroundColor, webviewBackgroundColor) {
-  // 1. Update colors.xml or cdv_colors.xml - ONLY named splash colors
-  const colorsPath = getColorsPath(root);
-  
-  if (colorsPath && fs.existsSync(colorsPath)) {
-    let colors = fs.readFileSync(colorsPath, 'utf8');
+  const resPath = path.join(root, 'platforms/android/app/src/main/res/values');
+  const colorsXmlPath = path.join(resPath, 'colors.xml');
+  const cdvColorsPath = path.join(resPath, 'cdv_colors.xml');
+
+  // --- 1a. Update colors.xml — legacy names ONLY ---
+  if (fs.existsSync(colorsXmlPath)) {
+    let colors = fs.readFileSync(colorsXmlPath, 'utf8');
     let updated = false;
-    
+
     if (backgroundColor) {
-      // Replace ONLY splash-named colors
-      for (const colorName of SPLASH_COLOR_NAMES) {
+      // Update existing legacy splash color names
+      const legacyNames = ['splash_background', 'splashColor', 'splash_color',
+        'splashscreen_color', 'splashBackground', 'cordova_splash_background'];
+      for (const colorName of legacyNames) {
         const regex = new RegExp(
-          `<color name="${colorName}">[^<]*</color>`,
-          'i'
+          `<color name="${colorName}">[^<]*</color>`, 'i'
         );
-        
         if (colors.match(regex)) {
-          colors = colors.replace(
-            regex,
-            `<color name="${colorName}">${backgroundColor}</color>`
-          );
-          console.log(`   ✓ Updated ${colorName}`);
+          colors = colors.replace(regex,
+            `<color name="${colorName}">${backgroundColor}</color>`);
+          console.log(`   ✓ Updated ${colorName} in colors.xml`);
           updated = true;
         }
       }
-      
+
       // Add splash_background if not exists
       if (!colors.includes('splash_background')) {
-        colors = colors.replace(
-          '</resources>',
-          `    <color name="splash_background">${backgroundColor}</color>\n</resources>`
-        );
-        console.log(`   ✓ Added splash_background`);
+        colors = colors.replace('</resources>',
+          `    <color name="splash_background">${backgroundColor}</color>\n</resources>`);
+        console.log(`   ✓ Added splash_background to colors.xml`);
         updated = true;
       }
-      
-      // Fix cdv_splashscreen_background to use direct color instead of reference
-      if (colors.includes('cdv_splashscreen_background')) {
+    }
+
+    if (webviewBackgroundColor) {
+      if (!colors.includes('webview_background')) {
+        colors = colors.replace('</resources>',
+          `    <color name="webview_background">${webviewBackgroundColor}</color>\n</resources>`);
+        console.log(`   ✓ Added webview_background to colors.xml`);
+      } else {
         colors = colors.replace(
-          /<color name="cdv_splashscreen_background">@color\/cdv_background_color<\/color>/i,
-          `<color name="cdv_splashscreen_background">${backgroundColor}</color>`
-        );
+          /<color name="webview_background">[^<]*<\/color>/i,
+          `<color name="webview_background">${webviewBackgroundColor}</color>`);
+        console.log(`   ✓ Updated webview_background in colors.xml`);
+      }
+      updated = true;
+    }
+
+    if (updated) {
+      safeWriteFile(colorsXmlPath, colors);
+      console.log(`   📝 Saved colors.xml`);
+    }
+  } else {
+    // Fallback: try cdv_colors.xml for cdv_* names only (no legacy names)
+    console.log('   ℹ️  colors.xml not found');
+  }
+
+  // --- 1b. Update cdv_colors.xml — Cordova cdv_* names ONLY ---
+  if (fs.existsSync(cdvColorsPath) && backgroundColor) {
+    let cdvColors = fs.readFileSync(cdvColorsPath, 'utf8');
+    let updated = false;
+
+    // Update cdv_* splash color names
+    const cdvNames = ['cdv_background_color', 'cdv_splashscreen_background',
+      'cdv_splashscreen_background_color'];
+    for (const colorName of cdvNames) {
+      const regex = new RegExp(
+        `<color name="${colorName}">[^<]*</color>`, 'i'
+      );
+      if (cdvColors.match(regex)) {
+        cdvColors = cdvColors.replace(regex,
+          `<color name="${colorName}">${backgroundColor}</color>`);
+        console.log(`   ✓ Updated ${colorName} in cdv_colors.xml`);
+        updated = true;
+      }
+    }
+
+    // Fix cdv_splashscreen_background reference
+    if (cdvColors.includes('cdv_splashscreen_background')) {
+      const refRegex = /<color name="cdv_splashscreen_background">@color\/cdv_background_color<\/color>/i;
+      if (refRegex.test(cdvColors)) {
+        cdvColors = cdvColors.replace(refRegex,
+          `<color name="cdv_splashscreen_background">${backgroundColor}</color>`);
         console.log(`   ✓ Fixed cdv_splashscreen_background reference`);
         updated = true;
       }
     }
-    
-    if (webviewBackgroundColor) {
-      // Add or update webview_background
-      if (!colors.includes('webview_background')) {
-        colors = colors.replace(
-          '</resources>',
-          `    <color name="webview_background">${webviewBackgroundColor}</color>\n</resources>`
-        );
-        console.log(`   ✓ Added webview_background`);
-      } else {
-        colors = colors.replace(
-          /<color name="webview_background">[^<]*<\/color>/i,
-          `<color name="webview_background">${webviewBackgroundColor}</color>`
-        );
-        console.log(`   ✓ Updated webview_background`);
+
+    // CRITICAL: Remove legacy names from cdv_colors.xml to prevent duplicates
+    for (const legacyName of ['splash_background', 'webview_background']) {
+      const legacyRegex = new RegExp(
+        `\\s*<color\\s+name=["']${legacyName}["'][^>]*>[^<]*<\\/color>\\s*`, 'g'
+      );
+      if (legacyRegex.test(cdvColors)) {
+        cdvColors = cdvColors.replace(legacyRegex, '\n');
+        console.log(`   ✓ Removed duplicate ${legacyName} from cdv_colors.xml`);
+        updated = true;
       }
-      updated = true;
     }
-    
+
     if (updated) {
-      safeWriteFile(colorsPath, colors);
-      console.log(`   📝 Saved ${path.basename(colorsPath)}`);
+      safeWriteFile(cdvColorsPath, cdvColors);
+      console.log(`   📝 Saved cdv_colors.xml`);
     }
-  } else {
-    console.log('   ⚠️  No colors file found (colors.xml or cdv_colors.xml)');
   }
   
   // 2. Update styles.xml/themes.xml/cdv_themes.xml - Use @color references
@@ -285,58 +323,52 @@ module.exports = function(context) {
   const root = context.opts.projectRoot;
   
   const config = getConfigParser(context, path.join(root, 'config.xml'));
-  
-  // Get native background preferences. BackgroundColor is the canonical
-  // OutSystems value; WEBVIEW_BACKGROUND_COLOR is handled separately below.
-  let splashColor = config.getPreference('BackgroundColor') ||
-                    config.getPreference('SplashScreenBackgroundColor') ||
-                    config.getPreference('AndroidWindowSplashScreenBackground') ||
-                    config.getPreference('AndroidWindowSplashScreenBackgroundColor') ||
-                    config.getPreference('SPLASH_BACKGROUND_COLOR');
-                    
-  let webviewColor = config.getPreference('WEBVIEW_BACKGROUND_COLOR') ||
-                     config.getPreference('WebviewBackgroundColor');
-  
-  // Validate colors
-  if (splashColor && !validateHexColor(splashColor)) {
-    console.error('\n❌ Invalid splash color format. Use hex color (e.g., #FFFFFF)');
-    return;
-  }
-  
-  if (webviewColor && !validateHexColor(webviewColor)) {
-    console.error('\n❌ Invalid webview color format. Use hex color (e.g., #FFFFFF)');
-    return;
-  }
-  
-  // Normalize colors
-  if (splashColor) {
-    splashColor = normalizeHexColor(splashColor);
-  }
-  if (webviewColor) {
-    webviewColor = normalizeHexColor(webviewColor);
-  }
-  
-  // Skip if no colors configured
-  if (!splashColor && !webviewColor) {
-    console.log('\n🎨 No custom colors configured, skipping');
-    return;
-  }
+
+  // Helper: read a preference list, preferring the given platform.
+  const readPref = (names, platform) => {
+    for (const n of names) {
+      const v = config.getPreference(n, platform) || config.getPreference(n);
+      if (v) return v;
+    }
+    return undefined;
+  };
+
+  const SPLASH_NAMES = [
+    'BackgroundColor',
+    'SplashScreenBackgroundColor',
+    'AndroidWindowSplashScreenBackground',
+    'AndroidWindowSplashScreenBackgroundColor',
+    'SPLASH_BACKGROUND_COLOR'
+  ];
+  const WEBVIEW_NAMES = ['WEBVIEW_BACKGROUND_COLOR', 'WebviewBackgroundColor'];
   
   console.log('\n══════════════════════════════════════════════');
   console.log('  🎨 CUSTOMIZE COLORS (Named Colors Only)');
   console.log('══════════════════════════════════════════════');
-  console.log('⚠️  ONLY replaces named splash colors');
-  console.log('⚠️  Includes Cordova cdv_* color names');
-  console.log('⚠️  Supports new Cordova template files (cdv_*.xml)');
-  console.log('⚠️  Does NOT replace by hex value');
-  console.log('⚠️  Status bar and other colors preserved');
-  
-  if (splashColor) console.log(`Splash: ${splashColor}`);
-  if (webviewColor) console.log(`Webview: ${webviewColor}`);
-  
+
   for (const platform of platforms) {
-    console.log(`\n📱 ${platform}...`);
-    
+    // Read per-platform (config.xml puts these inside <platform>)
+    let splashColor = readPref(SPLASH_NAMES, platform);
+    let webviewColor = readPref(WEBVIEW_NAMES, platform);
+
+    if (splashColor && !validateHexColor(splashColor)) {
+      console.error(`\n❌ ${platform}: invalid splash color, skipping`);
+      splashColor = undefined;
+    }
+    if (webviewColor && !validateHexColor(webviewColor)) {
+      console.error(`\n❌ ${platform}: invalid webview color, skipping`);
+      webviewColor = undefined;
+    }
+    if (splashColor) splashColor = normalizeHexColor(splashColor);
+    if (webviewColor) webviewColor = normalizeHexColor(webviewColor);
+
+    if (!splashColor && !webviewColor) {
+      console.log(`\n📱 ${platform}: no colors configured, skipping`);
+      continue;
+    }
+
+    console.log(`\n📱 ${platform}... splash=${splashColor || '-'} webview=${webviewColor || '-'}`);
+
     try {
       if (platform === 'android') {
         customizeAndroidColors(root, splashColor, webviewColor);
