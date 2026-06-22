@@ -692,6 +692,7 @@ function writeSplashThemeOverride(root, backgroundColor) {
         <item name="windowSplashScreenAnimatedIcon">@drawable/cdv_transparent_splash_icon</item>
         <item name="windowSplashScreenIconBackgroundColor">@color/cordova_splash_background</item>
         <item name="windowSplashScreenAnimationDuration">0</item>
+        <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
         <item name="postSplashScreenTheme">@style/CordovaSplashTheme</item>
         <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
     </style>`;
@@ -722,6 +723,7 @@ function writeSplashThemeOverride(root, backgroundColor) {
     <style name="CordovaSplashTheme" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@color/cordova_splash_background</item>
         <item name="android:colorBackground">@color/cordova_splash_background</item>
+        <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
         <item name="android:windowIsTranslucent">false</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>
@@ -740,6 +742,7 @@ function writeSplashThemeOverride(root, backgroundColor) {
         <item name="windowSplashScreenAnimatedIcon">@drawable/cdv_transparent_splash_icon</item>
         <item name="windowSplashScreenIconBackgroundColor">@color/cordova_splash_background</item>
         <item name="windowSplashScreenAnimationDuration">0</item>
+        <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
         <item name="postSplashScreenTheme">@style/CordovaSplashTheme</item>
         <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
     </style>

@@ -5,6 +5,7 @@
     <style name="CordovaSplashTheme" parent="Theme.AppCompat.NoActionBar">
         <!-- Set window background immediately -->
         <item name="android:windowBackground">@color/cordova_splash_background</item>
+        <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
         
         <!-- No title bar -->
         <item name="android:windowNoTitle">true</item>

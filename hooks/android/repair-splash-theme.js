@@ -17,6 +17,7 @@ const DEFAULT_SPLASH_STYLE = `    <style name="Theme.App.SplashScreen" parent="T
         <item name="windowSplashScreenBackground">@color/cdv_splashscreen_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_cdv_splashscreen</item>
         <item name="windowSplashScreenAnimationDuration">200</item>
+        <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
         <item name="postSplashScreenTheme">@style/Theme.AppCompat.NoActionBar</item>
         <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
     </style>`;
@@ -26,6 +27,7 @@ function hasRequiredSplashItems(styleXml) {
     'windowSplashScreenBackground',
     'windowSplashScreenAnimatedIcon',
     'windowSplashScreenAnimationDuration',
+    'splashScreenIconSize',
     'postSplashScreenTheme',
     'android:windowOptOutEdgeToEdgeEnforcement'
   ].every(itemName => styleXml.includes(`name="${itemName}"`) || styleXml.includes(`name='${itemName}'`));
