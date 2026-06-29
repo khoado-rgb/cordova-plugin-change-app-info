@@ -1,7 +1,22 @@
 var fs    = require('fs');     // nodejs.org/api/fs.html
 var plist = require('plist');  // www.npmjs.com/package/plist
 var path = require("path");
-var semver = require('semver');
+
+function isCordovaBelow(context, version) {
+    var cordovaVersion = context.opts.cordova.version || '0.0.0';
+    var current = String(cordovaVersion).split('.').map(Number);
+    var target = String(version).split('.').map(Number);
+
+    for (var i = 0; i < Math.max(current.length, target.length); i++) {
+        var currentPart = current[i] || 0;
+        var targetPart = target[i] || 0;
+
+        if (currentPart < targetPart) return true;
+        if (currentPart > targetPart) return false;
+    }
+
+    return false;
+}
 
 module.exports = function (context) {
 
@@ -73,8 +88,9 @@ module.exports = function (context) {
 };
 
 function getConfigParser(context, config) {
+    var ConfigParser;
 
-    if (semver.lt(context.opts.cordova.version, '5.4.0')) {
+    if (isCordovaBelow(context, '5.4.0')) {
         ConfigParser = context.requireCordovaModule('cordova-lib/src/ConfigParser/ConfigParser');
     } else {
         ConfigParser = context.requireCordovaModule('cordova-common/src/ConfigParser/ConfigParser');

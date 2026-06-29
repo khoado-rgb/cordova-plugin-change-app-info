@@ -4,6 +4,19 @@ const fs = require("fs");
 const path = require("path");
 const { getConfigParser } = require("./utils");
 
+function escapeXmlText(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function escapeXmlAttribute(value) {
+  return escapeXmlText(value)
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 /**
  * Get preferences from root config.xml
  */
@@ -85,6 +98,7 @@ function updateAndroidAppInfo(root, prefs) {
 
   // Update app_name in strings file
   if (appName) {
+    const safeAppName = escapeXmlText(appName);
     const stringsPath = getStringsPath(root);
 
     if (!stringsPath) {
@@ -102,14 +116,16 @@ function updateAndroidAppInfo(root, prefs) {
           // UPDATE existing app_name
           content = content.replace(
             /<string name="app_name">.*?<\/string>/,
-            `<string name="app_name">${appName}</string>`
+            () =>
+            `<string name="app_name">${safeAppName}</string>`
           );
           console.log(`   ✅ Updated app_name: ${appName}`);
         } else {
           // ADD new app_name entry
           content = content.replace(
             "</resources>",
-            `    <string name="app_name">${appName}</string>\n</resources>`
+            () =>
+            `    <string name="app_name">${safeAppName}</string>\n</resources>`
           );
           console.log(`   ✅ Added app_name: ${appName}`);
         }
@@ -135,16 +151,20 @@ function updateAndroidAppInfo(root, prefs) {
         let content = fs.readFileSync(manifestPath, "utf8");
         
         if (versionNumber) {
+          const safeVersionNumber = escapeXmlAttribute(versionNumber);
           content = content.replace(
             /android:versionName="[^"]*"/,
-            `android:versionName="${versionNumber}"`
+            () =>
+            `android:versionName="${safeVersionNumber}"`
           );
         }
         
         if (versionCode) {
+          const safeVersionCode = escapeXmlAttribute(versionCode);
           content = content.replace(
             /android:versionCode="[^"]*"/,
-            `android:versionCode="${versionCode}"`
+            () =>
+            `android:versionCode="${safeVersionCode}"`
           );
         }
 
@@ -190,15 +210,15 @@ function updateIOSAppInfo(root, appFolderName, prefs) {
     // This ensures process name & display name are synchronized
     if (appName) {
       const finalAppName = appName.trim();
+      const safeAppName = escapeXmlText(finalAppName);
       
       // ────── Update or create CFBundleDisplayName ──────
       console.log('   🔄 Processing CFBundleDisplayName (Home Screen)...');
       const displayNameRegex = /<key>CFBundleDisplayName<\/key>\s*<string>.*?<\/string>/;
       if (displayNameRegex.test(content)) {
         // UPDATE existing
-        content = content.replace(
-          displayNameRegex,
-          `<key>CFBundleDisplayName</key>\n\t<string>${finalAppName}</string>`
+        content = content.replace(displayNameRegex, () =>
+          `<key>CFBundleDisplayName</key>\n\t<string>${safeAppName}</string>`
         );
         console.log('   ✅ Updated CFBundleDisplayName');
         modified = true;
@@ -206,7 +226,8 @@ function updateIOSAppInfo(root, appFolderName, prefs) {
         // CREATE new if missing
         content = content.replace(
           /<\/dict>\s*<\/plist>/,
-          `\t<key>CFBundleDisplayName</key>\n\t<string>${finalAppName}</string>\n</dict>\n</plist>`
+          () =>
+          `\t<key>CFBundleDisplayName</key>\n\t<string>${safeAppName}</string>\n</dict>\n</plist>`
         );
         console.log('   ✅ Created CFBundleDisplayName');
         modified = true;
@@ -219,9 +240,8 @@ function updateIOSAppInfo(root, appFolderName, prefs) {
       const bundleNameRegex = /<key>CFBundleName<\/key>\s*<string>.*?<\/string>/;
       if (bundleNameRegex.test(content)) {
         // UPDATE existing
-        content = content.replace(
-          bundleNameRegex,
-          `<key>CFBundleName</key>\n\t<string>${finalAppName}</string>`
+        content = content.replace(bundleNameRegex, () =>
+          `<key>CFBundleName</key>\n\t<string>${safeAppName}</string>`
         );
         console.log('   ✅ Updated CFBundleName (Process Name)');
         modified = true;
@@ -230,7 +250,8 @@ function updateIOSAppInfo(root, appFolderName, prefs) {
         // Without this, old process name from cache appears in app switcher
         content = content.replace(
           /<\/dict>\s*<\/plist>/,
-          `\t<key>CFBundleName</key>\n\t<string>${finalAppName}</string>\n</dict>\n</plist>`
+          () =>
+          `\t<key>CFBundleName</key>\n\t<string>${safeAppName}</string>\n</dict>\n</plist>`
         );
         console.log('   ✅ Created CFBundleName (Process Name) - FIX APPLIED!');
         modified = true;
@@ -239,12 +260,12 @@ function updateIOSAppInfo(root, appFolderName, prefs) {
 
     // Update CFBundleShortVersionString (Version Number) - only if set
     if (versionNumber) {
+      const safeVersionNumber = escapeXmlText(versionNumber);
       console.log('   🔄 Processing CFBundleShortVersionString (Version)...');
       const versionRegex = /<key>CFBundleShortVersionString<\/key>\s*<string>.*?<\/string>/;
       if (versionRegex.test(content)) {
-        content = content.replace(
-          versionRegex,
-          `<key>CFBundleShortVersionString</key>\n\t<string>${versionNumber}</string>`
+        content = content.replace(versionRegex, () =>
+          `<key>CFBundleShortVersionString</key>\n\t<string>${safeVersionNumber}</string>`
         );
         console.log('   ✅ Updated CFBundleShortVersionString');
         modified = true;
@@ -253,12 +274,12 @@ function updateIOSAppInfo(root, appFolderName, prefs) {
 
     // Update CFBundleVersion (Build Number) - only if set
     if (versionCode) {
+      const safeVersionCode = escapeXmlText(versionCode);
       console.log('   🔄 Processing CFBundleVersion (Build Number)...');
       const buildRegex = /<key>CFBundleVersion<\/key>\s*<string>.*?<\/string>/;
       if (buildRegex.test(content)) {
-        content = content.replace(
-          buildRegex,
-          `<key>CFBundleVersion</key>\n\t<string>${versionCode}</string>`
+        content = content.replace(buildRegex, () =>
+          `<key>CFBundleVersion</key>\n\t<string>${safeVersionCode}</string>`
         );
         console.log('   ✅ Updated CFBundleVersion');
         modified = true;

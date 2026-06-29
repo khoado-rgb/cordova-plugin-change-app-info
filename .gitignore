@@ -37,6 +37,7 @@ node_modules
 
 # Local agent tooling
 .claude/
+.codex/
 .gitnexus/
 AGENTS.md
 CLAUDE.md

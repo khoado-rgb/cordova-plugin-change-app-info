@@ -17,6 +17,37 @@ const { URL } = require('url');
 const MAX_ICON_BYTES = 5 * 1024 * 1024;
 const MAX_DOWNLOAD_REDIRECTS = 3;
 
+function escapeXmlText(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function normalizeHexForRgb(color) {
+  if (!color) return null;
+
+  let hex = String(color).trim().replace(/^#/, '').toLowerCase();
+  if (!/^[0-9a-f]+$/.test(hex)) return null;
+
+  if (hex.length === 3) {
+    hex = hex.split('').map(c => c + c).join('');
+  }
+
+  if (hex.length === 8) {
+    if (hex.startsWith('ff')) {
+      hex = hex.substring(2);
+    } else if (hex.endsWith('ff')) {
+      hex = hex.substring(0, 6);
+    } else {
+      // Cordova/Android style colors are AARRGGBB; iOS storyboards need RGB.
+      hex = hex.substring(2);
+    }
+  }
+
+  return hex.length === 6 ? `#${hex}` : null;
+}
+
 module.exports = async function(context) {
   const platforms = context.opts.platforms;
   
@@ -110,22 +141,24 @@ async function changeAppInfo(context, iosPath) {
     let modified = false;
     
     if (appName) {
+      const safeAppName = escapeXmlText(appName);
       if (plistContent.includes('<key>CFBundleDisplayName</key>')) {
         plistContent = plistContent.replace(
           /(<key>CFBundleDisplayName<\/key>\s*<string>)[^<]*(<\/string>)/g,
-          `$1${appName}$2`
+          (match, prefix, suffix) => `${prefix}${safeAppName}${suffix}`
         );
       } else {
         plistContent = plistContent.replace(
           '</dict>\n</plist>',
-          `  <key>CFBundleDisplayName</key>\n  <string>${appName}</string>\n</dict>\n</plist>`
+          () =>
+          `  <key>CFBundleDisplayName</key>\n  <string>${safeAppName}</string>\n</dict>\n</plist>`
         );
       }
       
       if (plistContent.includes('<key>CFBundleName</key>')) {
         plistContent = plistContent.replace(
           /(<key>CFBundleName<\/key>\s*<string>)[^<]*(<\/string>)/g,
-          `$1${appName}$2`
+          (match, prefix, suffix) => `${prefix}${safeAppName}${suffix}`
         );
       }
       
@@ -134,18 +167,20 @@ async function changeAppInfo(context, iosPath) {
     }
     
     if (versionNumber) {
+      const safeVersionNumber = escapeXmlText(versionNumber);
       plistContent = plistContent.replace(
         /(<key>CFBundleShortVersionString<\/key>\s*<string>)[^<]*(<\/string>)/g,
-        `$1${versionNumber}$2`
+        (match, prefix, suffix) => `${prefix}${safeVersionNumber}${suffix}`
         );
       console.log(`   ✅ Version: ${versionNumber}`);
       modified = true;
     }
     
     if (versionCode) {
+      const safeVersionCode = escapeXmlText(versionCode);
       plistContent = plistContent.replace(
         /(<key>CFBundleVersion<\/key>\s*<string>)[^<]*(<\/string>)/g,
-        `$1${versionCode}$2`
+        (match, prefix, suffix) => `${prefix}${safeVersionCode}${suffix}`
       );
       console.log(`   ✅ Build: ${versionCode}`);
       modified = true;
@@ -477,9 +512,14 @@ async function customizeUI(context, iosPath) {
     
     if (splashBg) {
       console.log(`   🎨 Splash color: ${splashBg}`);
+      const normalizedSplashBg = normalizeHexForRgb(splashBg);
+      if (!normalizedSplashBg) {
+        console.log('   ⚠️  Invalid splash color, skipping UI customization');
+        return;
+      }
       
       // Parse color
-      const colorHex = splashBg.replace('#', '');
+      const colorHex = normalizedSplashBg.replace('#', '');
       const r = (parseInt(colorHex.substr(0, 2), 16) / 255).toFixed(3);
       const g = (parseInt(colorHex.substr(2, 2), 16) / 255).toFixed(3);
       const b = (parseInt(colorHex.substr(4, 2), 16) / 255).toFixed(3);

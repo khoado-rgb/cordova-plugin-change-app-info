@@ -181,14 +181,23 @@ class CSSInjector: CDVPlugin {
      * Sets background color before page renders (prevents white flash)
      */
     private func buildBackgroundUserScript(color: String) -> WKUserScript? {
-        // Validate hex format to prevent JS injection via malformed color preference
-        let hexPattern = try! NSRegularExpression(pattern: "^#?[A-Fa-f0-9]{6}([A-Fa-f0-9]{2})?$")
-        guard hexPattern.firstMatch(in: color, range: NSRange(color.startIndex..., in: color)) != nil else {
+        let hex = color.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "#", with: "")
+            .lowercased()
+
+        guard hex.range(of: "^[0-9a-f]{6}([0-9a-f]{2})?$", options: .regularExpression) != nil else {
             print("[CSSInjector] Invalid background color format; preserving default app colors")
             return nil
         }
 
-        let safeColor = color
+        let safeColor: String
+        if hex.count == 8 && hex.hasPrefix("ff") {
+            safeColor = "#\(String(hex.dropFirst(2)))"
+        } else if hex.count == 8 && hex.hasSuffix("ff") {
+            safeColor = "#\(String(hex.dropLast(2)))"
+        } else {
+            safeColor = color.hasPrefix("#") ? color : "#\(color)"
+        }
         let css = "html, body, #root, #app, .app-container { background-color: \(safeColor) !important; background: \(safeColor) !important; margin: 0; padding: 0; }"
         let escapedCSS = css.replacingOccurrences(of: "'", with: "\\'")
         let originGuard = buildOriginGuardJavaScript()
@@ -460,6 +469,15 @@ class CSSInjector: CDVPlugin {
     private func hexStringToUIColor(hex: String) -> UIColor? {
         var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
         hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
+        hexSanitized = hexSanitized.lowercased()
+
+        guard hexSanitized.range(of: "^[0-9a-f]+$", options: .regularExpression) != nil else {
+            return nil
+        }
+
+        if hexSanitized.count == 3 {
+            hexSanitized = hexSanitized.map { "\($0)\($0)" }.joined()
+        }
         
         var rgb: UInt64 = 0
         
@@ -475,10 +493,20 @@ class CSSInjector: CDVPlugin {
             let b = CGFloat(rgb & 0x0000FF) / 255.0
             return UIColor(red: r, green: g, blue: b, alpha: 1.0)
         } else if length == 8 {
-            let r = CGFloat((rgb & 0xFF000000) >> 24) / 255.0
-            let g = CGFloat((rgb & 0x00FF0000) >> 16) / 255.0
-            let b = CGFloat((rgb & 0x0000FF00) >> 8) / 255.0
-            let a = CGFloat(rgb & 0x000000FF) / 255.0
+            if hexSanitized.hasSuffix("ff") && !hexSanitized.hasPrefix("ff") {
+                // CSS style RRGGBBAA.
+                let r = CGFloat((rgb & 0xFF000000) >> 24) / 255.0
+                let g = CGFloat((rgb & 0x00FF0000) >> 16) / 255.0
+                let b = CGFloat((rgb & 0x0000FF00) >> 8) / 255.0
+                let a = CGFloat(rgb & 0x000000FF) / 255.0
+                return UIColor(red: r, green: g, blue: b, alpha: a)
+            }
+
+            // Cordova/Android style AARRGGBB.
+            let a = CGFloat((rgb & 0xFF000000) >> 24) / 255.0
+            let r = CGFloat((rgb & 0x00FF0000) >> 16) / 255.0
+            let g = CGFloat((rgb & 0x0000FF00) >> 8) / 255.0
+            let b = CGFloat(rgb & 0x000000FF) / 255.0
             return UIColor(red: r, green: g, blue: b, alpha: a)
         }
         
