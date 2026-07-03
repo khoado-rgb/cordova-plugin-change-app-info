@@ -216,14 +216,15 @@ public class CSSInjector extends CordovaPlugin {
             android.util.Log.e(TAG, "Config NOT loaded - file missing or error");
         }
         
-        // Pre-build inline scripts for HTML injection
-        buildConfigScript();
-        buildCSSInlineScript();
-        
         handler = new Handler(Looper.getMainLooper());
         
-        // Start aggressive polling injection
-        startPollingInjection();
+        // Run one idempotent pass during initialization. Later page lifecycle
+        // hooks re-apply on navigation; avoid fixed-interval startup polling.
+        injectBuildConfig();
+        if (backgroundColor != null && !backgroundColor.isEmpty()) {
+            injectBackgroundColorCSS(backgroundColor);
+        }
+        injectCSSIntoWebView();
         
         android.util.Log.d(TAG, "=== CSSInjector pluginInitialize END ===");
     }
