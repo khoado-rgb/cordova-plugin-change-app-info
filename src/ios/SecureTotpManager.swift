@@ -18,6 +18,30 @@ class SecureTotpManager {
     private static var rsaKeyTag: String {
         return "\(bundleID).totp.rsa.v1"
     }
+
+    private static func deleteStoredSecret() {
+        let queryDelete: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceNameAes,
+            kSecAttrAccount as String: accountNameAes
+        ]
+        SecItemDelete(queryDelete as CFDictionary)
+    }
+
+    private static func normalizeBase32Secret(_ secret: String) -> String? {
+        let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+        let normalized = secret
+            .replacingOccurrences(of: "=", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .filter { !$0.isWhitespace }
+            .uppercased()
+
+        guard !normalized.isEmpty else { return nil }
+        guard normalized.allSatisfy({ alphabet.contains($0) }) else { return nil }
+        guard base32Decode(normalized) != nil else { return nil }
+
+        return normalized
+    }
     
     // =========================================================================
     // 1. Export the public key in X.509/SPKI-compatible PEM format.
@@ -106,36 +130,51 @@ class SecureTotpManager {
     // 3. Decrypt the secret with the private key and save it to Keychain.
     // =========================================================================
     static func decryptAndSaveSecret(_ encryptedSecretBase64: String) -> Bool {
-        guard let cipherData = Data(base64Encoded: encryptedSecretBase64, options: []) else { return false }
-        guard let privateKey = getOrGenerateRsaPrivateKey() else { return false }
+        guard let cipherData = Data(base64Encoded: encryptedSecretBase64, options: []) else {
+            deleteStoredSecret()
+            return false
+        }
+        guard let privateKey = getOrGenerateRsaPrivateKey() else {
+            deleteStoredSecret()
+            return false
+        }
         
         // RSA decryption using OAEP-SHA256 (secure against Bleichenbacher's attack)
         // OutSystems JS must ensure the server encrypts with OaepSHA256 before calling this.
         let algorithm = SecKeyAlgorithm.rsaEncryptionOAEPSHA256
-        if !SecKeyIsAlgorithmSupported(privateKey, .decrypt, algorithm) { return false }
-        
-        var error: Unmanaged<CFError>?
-        guard let decryptedSecretData = SecKeyCreateDecryptedData(privateKey, algorithm, cipherData as CFData, &error) as Data? else {
+        if !SecKeyIsAlgorithmSupported(privateKey, .decrypt, algorithm) {
+            deleteStoredSecret()
             return false
         }
         
-        guard let decryptedSecretStr = String(data: decryptedSecretData, encoding: .utf8) else { return false }
-        return saveToAesKeychain(decryptedSecretStr)
+        var error: Unmanaged<CFError>?
+        guard let decryptedSecretData = SecKeyCreateDecryptedData(privateKey, algorithm, cipherData as CFData, &error) as Data? else {
+            deleteStoredSecret()
+            return false
+        }
+        
+        guard let decryptedSecretStr = String(data: decryptedSecretData, encoding: .utf8),
+              let normalizedSecret = normalizeBase32Secret(decryptedSecretStr) else {
+            deleteStoredSecret()
+            return false
+        }
+
+        guard saveToAesKeychain(normalizedSecret) else {
+            deleteStoredSecret()
+            return false
+        }
+        return true
     }
     
     // =========================================================================
     // 4. Store the secret in Keychain.
     // =========================================================================
     private static func saveToAesKeychain(_ secret: String) -> Bool {
-        guard let data = secret.data(using: .utf8) else { return false }
+        guard let normalizedSecret = normalizeBase32Secret(secret),
+              let data = normalizedSecret.data(using: .utf8) else { return false }
         
         // Remove the old item first to avoid duplicate-key failures.
-        let queryDelete: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: serviceNameAes,
-            kSecAttrAccount as String: accountNameAes
-        ]
-        SecItemDelete(queryDelete as CFDictionary)
+        deleteStoredSecret()
         
         guard let accessControl = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
@@ -177,9 +216,17 @@ class SecureTotpManager {
         guard status == errSecSuccess,
               let retrievedData = dataTypeRef as? Data,
               let secretString = String(data: retrievedData, encoding: .utf8) else { return nil }
+
+        guard let normalizedSecret = normalizeBase32Secret(secretString) else {
+            deleteStoredSecret()
+            return nil
+        }
         
         // 1. Decode the Base32 secret into bytes.
-        guard let keyData = base32Decode(secretString) else { return nil }
+        guard let keyData = base32Decode(normalizedSecret) else {
+            deleteStoredSecret()
+            return nil
+        }
         
         // 2. Calculate the time step.
         let epoch = Int(Date().timeIntervalSince1970) + timeOffset
@@ -212,9 +259,10 @@ class SecureTotpManager {
         var bitsLeft: Int = 0
         
         let cleanString = base32String.replacingOccurrences(of: "=", with: "").uppercased()
+        guard !cleanString.isEmpty else { return nil }
         
         for char in cleanString {
-            guard let index = alphabet.firstIndex(of: char) else { continue }
+            guard let index = alphabet.firstIndex(of: char) else { return nil }
             let val = UInt32(alphabet.distance(from: alphabet.startIndex, to: index))
             
             // Shift the next 5 bits into the buffer.
