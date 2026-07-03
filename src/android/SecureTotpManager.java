@@ -9,11 +9,14 @@ import android.util.Base64;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKey;
 
+import java.io.File;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
 import java.security.PublicKey;
 import java.security.cert.Certificate;
+import java.util.Locale;
 
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
@@ -44,12 +47,26 @@ public class SecureTotpManager {
     private static SharedPreferences cachedPrefs = null;
     private static String cachedPrefsName = null;
 
-    private static SharedPreferences getEncryptedPrefs(Context context) throws Exception {
+    private static synchronized SharedPreferences getEncryptedPrefs(Context context) throws Exception {
         String prefsName = getPrefsName(context);
         if (cachedPrefs != null && prefsName.equals(cachedPrefsName)) {
             return cachedPrefs;
         }
 
+        try {
+            return createEncryptedPrefs(context, prefsName);
+        } catch (java.security.GeneralSecurityException | java.io.IOException firstError) {
+            resetEncryptedPrefs(context, prefsName);
+            try {
+                return createEncryptedPrefs(context, prefsName);
+            } catch (Exception retryError) {
+                retryError.addSuppressed(firstError);
+                throw retryError;
+            }
+        }
+    }
+
+    private static SharedPreferences createEncryptedPrefs(Context context, String prefsName) throws Exception {
         MasterKey masterKey = new MasterKey.Builder(context)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build();
@@ -64,6 +81,62 @@ public class SecureTotpManager {
         cachedPrefsName = prefsName;
         cachedMasterKey = masterKey;
         return cachedPrefs;
+    }
+
+    private static void resetEncryptedPrefs(Context context, String prefsName) {
+        cachedPrefs = null;
+        cachedPrefsName = null;
+        cachedMasterKey = null;
+
+        File sharedPrefsFile = new File(
+                new File(context.getApplicationInfo().dataDir, "shared_prefs"),
+                prefsName + ".xml"
+        );
+
+        try {
+            boolean cleared = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+                    .edit()
+                    .clear()
+                    .commit();
+            if (!cleared) {
+                LogUtil.e(context, TAG, "Could not clear stale encrypted TOTP prefs.");
+            }
+        } catch (Exception e) {
+            LogUtil.e(context, TAG, "Could not clear stale encrypted TOTP prefs: " + e.getMessage());
+        }
+
+        try {
+            if (sharedPrefsFile.exists() && !sharedPrefsFile.delete()) {
+                LogUtil.e(context, TAG, "Could not delete stale encrypted TOTP prefs file.");
+            }
+        } catch (Exception e) {
+            LogUtil.e(context, TAG, "Could not delete stale encrypted TOTP prefs: " + e.getMessage());
+        }
+    }
+
+    private static String normalizeBase32Secret(String secret) throws Exception {
+        if (secret == null) {
+            throw new Exception("Invalid Base32 secret.");
+        }
+
+        String normalized = secret
+                .replace("=", "")
+                .replaceAll("\\s+", "")
+                .replace("-", "")
+                .trim()
+                .toUpperCase(Locale.US);
+
+        if (normalized.isEmpty() || !normalized.matches("^[A-Z2-7]+$")) {
+            throw new Exception("Invalid Base32 secret.");
+        }
+
+        byte[] decoded = base32Decode(normalized);
+        if (decoded == null || decoded.length == 0) {
+            throw new Exception("Invalid Base32 secret.");
+        }
+        java.util.Arrays.fill(decoded, (byte) 0);
+
+        return normalized;
     }
 
     // =========================================================================
@@ -149,6 +222,8 @@ public class SecureTotpManager {
     // =========================================================================
     public static void saveEncryptedSecret(Context context, String encryptedSecretBase64) throws Exception {
         LogUtil.d(context, TAG, "Starting to decrypt Secret Key...");
+        SharedPreferences sharedPreferences = getEncryptedPrefs(context);
+        String secretKeyAccount = getSecretKeyAccount(context);
 
         // 1. Load the private key from Android Keystore.
         KeyStore keyStore = KeyStore.getInstance(ANDROID_KEY_STORE);
@@ -161,24 +236,39 @@ public class SecureTotpManager {
 
         // 2. RSA decryption using OAEP-SHA256 (secure against Bleichenbacher's attack)
         // OutSystems JS must ensure the server encrypts with OaepSHA256 before calling this.
-        Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
-        cipher.init(Cipher.DECRYPT_MODE, privateKey);
-
-        // 3. Decrypt and convert to string
-        byte[] encryptedBytes = Base64.decode(encryptedSecretBase64, Base64.NO_WRAP);
-        byte[] decryptedBytes = cipher.doFinal(encryptedBytes);
         String rawSecret;
         try {
-            rawSecret = new String(decryptedBytes, "UTF-8");
-        } finally {
-            java.util.Arrays.fill(decryptedBytes, (byte) 0);
-            java.util.Arrays.fill(encryptedBytes, (byte) 0);
+            Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
+            cipher.init(Cipher.DECRYPT_MODE, privateKey);
+
+            // 3. Decrypt and convert to a canonical Base32 secret.
+            byte[] encryptedBytes = null;
+            byte[] decryptedBytes = null;
+            try {
+                encryptedBytes = Base64.decode(encryptedSecretBase64, Base64.NO_WRAP);
+                decryptedBytes = cipher.doFinal(encryptedBytes);
+                rawSecret = normalizeBase32Secret(new String(decryptedBytes, StandardCharsets.UTF_8));
+            } finally {
+                if (decryptedBytes != null) {
+                    java.util.Arrays.fill(decryptedBytes, (byte) 0);
+                }
+                if (encryptedBytes != null) {
+                    java.util.Arrays.fill(encryptedBytes, (byte) 0);
+                }
+            }
+        } catch (Exception e) {
+            sharedPreferences.edit().remove(secretKeyAccount).commit();
+            throw e;
         }
 
-        // 4. Store the secret with encrypted shared preferences.
-        SharedPreferences sharedPreferences = getEncryptedPrefs(context);
-
-        sharedPreferences.edit().putString(getSecretKeyAccount(context), rawSecret).apply();
+        // 4. Replace the current secret atomically.
+        boolean saved = sharedPreferences.edit()
+                .remove(secretKeyAccount)
+                .putString(secretKeyAccount, rawSecret)
+                .commit();
+        if (!saved) {
+            throw new Exception("Storage Error: Could not save TOTP secret.");
+        }
 
         LogUtil.d(context, TAG, "Secret Key decrypted and heavily encrypted to storage!");
     }
@@ -201,6 +291,13 @@ public class SecureTotpManager {
 
         if (secret == null || secret.isEmpty()) {
             throw new Exception("Secret Key not found. Please register device first.");
+        }
+
+        try {
+            secret = normalizeBase32Secret(secret);
+        } catch (Exception e) {
+            sharedPreferences.edit().remove(getSecretKeyAccount(context)).commit();
+            throw new Exception("Stored TOTP secret is invalid. Please register device again.", e);
         }
 
         // 2. Decode the Base32 secret into bytes.

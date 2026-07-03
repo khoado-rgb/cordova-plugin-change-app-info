@@ -70,29 +70,36 @@ function ensureFullBackupContent(filePath, prefsFileName) {
 }
 
 function ensureDataExtractionRules(filePath, prefsFileName) {
-  const excludeLine = `        <exclude domain="sharedpref" path="${escapeXmlAttribute(prefsFileName)}" />`;
+  const escapedPrefsFileName = escapeXmlAttribute(prefsFileName);
+  const excludeLine = `        <exclude domain="sharedpref" path="${escapedPrefsFileName}" />`;
   let content;
 
   if (fs.existsSync(filePath)) {
     content = fs.readFileSync(filePath, 'utf8');
-    if (content.includes(`path="${escapeXmlAttribute(prefsFileName)}"`)) {
+
+    const cloudBackupMatch = content.match(/<cloud-backup\b[^>]*>[\s\S]*?<\/cloud-backup>/);
+    const deviceTransferMatch = content.match(/<device-transfer\b[^>]*>[\s\S]*?<\/device-transfer>/);
+    const cloudBackupHasExclude = !!(cloudBackupMatch && cloudBackupMatch[0].includes(`path="${escapedPrefsFileName}"`));
+    const deviceTransferHasExclude = !!(deviceTransferMatch && deviceTransferMatch[0].includes(`path="${escapedPrefsFileName}"`));
+
+    if (cloudBackupHasExclude && deviceTransferHasExclude) {
       return false;
     }
 
-    let inserted = false;
-    content = content.replace(/<\/cloud-backup>/, `${excludeLine}\n    </cloud-backup>`);
-    inserted = content.includes(`${excludeLine}\n    </cloud-backup>`);
+    if (cloudBackupMatch && !cloudBackupHasExclude) {
+      content = content.replace(/<\/cloud-backup>/, `${excludeLine}\n    </cloud-backup>`);
+    }
 
-    if (content.includes('</device-transfer>')) {
+    if (deviceTransferMatch && !deviceTransferHasExclude) {
       content = content.replace(/<\/device-transfer>/, `${excludeLine}\n    </device-transfer>`);
-    } else {
+    } else if (!deviceTransferMatch) {
       content = content.replace(
         '</data-extraction-rules>',
         `    <device-transfer>\n${excludeLine}\n    </device-transfer>\n</data-extraction-rules>`
       );
     }
 
-    if (!inserted && content.includes('</data-extraction-rules>')) {
+    if (!cloudBackupMatch && content.includes('</data-extraction-rules>')) {
       content = content.replace(
         '</data-extraction-rules>',
         `    <cloud-backup>\n${excludeLine}\n    </cloud-backup>\n</data-extraction-rules>`
