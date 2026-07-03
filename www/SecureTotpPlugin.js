@@ -39,7 +39,20 @@ var SecureTotpPlugin = {
      * Step 3: Get a 6-digit TOTP code (SHA-256).
      */
     getTotpCode: function(expired, timeOffset, successCallback, errorCallback) {
-        exec(successCallback, errorCallback, 'SecureTotpPlugin', 'getTotpCode', [expired, timeOffset]);
+        if (typeof timeOffset === 'function') {
+            errorCallback = successCallback;
+            successCallback = timeOffset;
+            timeOffset = 0;
+        }
+
+        var periodSeconds = parseInt(expired, 10);
+        var offsetSeconds = parseInt(timeOffset || 0, 10);
+        if (isNaN(periodSeconds) || isNaN(offsetSeconds)) {
+            if (errorCallback) errorCallback('TOTP period and timeOffset must be valid numbers.');
+            return;
+        }
+
+        exec(successCallback, errorCallback, 'SecureTotpPlugin', 'getTotpCode', [periodSeconds, offsetSeconds]);
     }
 };
 

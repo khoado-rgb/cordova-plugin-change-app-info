@@ -150,9 +150,8 @@ cordova.plugins.SecureTotpPlugin.getPublicKey(successCb, errorCb);
 cordova.plugins.SecureTotpPlugin.setEncryptedSecret(encryptedBase64, successCb, errorCb);
 
 // Generate TOTP code
-cordova.plugins.SecureTotpPlugin.getTotpCode(6, 30, function(result) {
-  console.log(result.code);      // "123456"
-  console.log(result.remaining); // seconds until expiry
+cordova.plugins.SecureTotpPlugin.getTotpCode(30, 0, function(code) {
+  console.log(code); // "123456"
 }, errorCb);
 ```
 

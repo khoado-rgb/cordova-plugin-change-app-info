@@ -132,11 +132,10 @@ cordova.plugins.SecureTotpPlugin.setEncryptedSecret(
 
 ```javascript
 cordova.plugins.SecureTotpPlugin.getTotpCode(
-  6,   // digits
-  30,  // period in seconds
-  function(result) {
-    $parameters.Code = result.code;           // e.g., "123456"
-    $parameters.Remaining = result.remaining; // seconds until expiry
+  30, // period in seconds
+  0,  // time offset in seconds
+  function(code) {
+    $parameters.Code = code; // e.g., "123456"
     $resolve();
   },
   function(error) { $reject(error); }
