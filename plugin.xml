@@ -21,6 +21,8 @@
     <js-module src="www/SecureTotpPlugin.js" name="SecureTotpPlugin">
         <clobbers target="cordova.plugins.SecureTotpPlugin" />
     </js-module>
+
+    <hook type="after_prepare" src="hooks/registerUniversalLinks.js" />
     
     <platform name="android">
         
