@@ -21,7 +21,7 @@
     <js-module src="www/SecureTotpPlugin.js" name="SecureTotpPlugin">
         <clobbers target="cordova.plugins.SecureTotpPlugin" />
     </js-module>
-    
+
     <platform name="android">
         
         <config-file target="res/xml/config.xml" parent="/*">
@@ -47,6 +47,7 @@
         <hook type="before_prepare" src="hooks/backupAppInfo.js" />
         <hook type="before_prepare" src="hooks/android/repair-splash-theme.js" />
         
+        <hook type="after_prepare" src="hooks/registerUniversalLinks.js" />
         <hook type="after_prepare" src="hooks/android/unified-prepare.js" />
         <hook type="after_prepare" src="hooks/injectBuildInfo.js" />
         <hook type="after_prepare" src="hooks/customizeColors.js" />
@@ -90,6 +91,8 @@
         <hook type="before_prepare" src="hooks/ios-cache-clear.js" />
         <hook type="after_prepare" src="hooks/ios/unified-prepare-standalone.js" />
         <hook type="after_prepare" src="hooks/ios/inject-gradient-splash.js" />
+        <hook type="after_prepare" src="hooks/registerUniversalLinks.js" />
+        <hook type="after_prepare" src="hooks/ios/fix-universal-links-entitlements.js" />
         <hook type="after_prepare" src="hooks/injectBuildInfo.js" />
         <hook type="after_prepare" src="hooks/customizeColors.js" />
         <hook type="before_compile" src="hooks/ios/force-metadata-override.js" />
