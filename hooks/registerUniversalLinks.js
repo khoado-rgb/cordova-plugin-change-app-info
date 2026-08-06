@@ -502,11 +502,15 @@ function registerIosUniversalLinks(root, hosts) {
   }
 
   const pbxprojPath = path.join(iosPath, `${projectName}.xcodeproj`, 'project.pbxproj');
-  const entitlementsPath = resolveEntitlementsPath(iosPath, projectName, pbxprojPath);
+  const entitlementsPaths = resolveEntitlementsPaths(iosPath, projectName, pbxprojPath);
   const associatedDomains = unique(hosts.map(host => `applinks:${host.name}`));
 
-  writeAssociatedDomainsEntitlements(entitlementsPath, associatedDomains);
-  updateXcodeEntitlementsSetting(pbxprojPath, iosPath, entitlementsPath);
+  entitlementsPaths.forEach(entitlementsPath => {
+    writeAssociatedDomainsEntitlements(entitlementsPath, associatedDomains);
+    console.log(`   Associated domains written to ${path.relative(iosPath, entitlementsPath)}`);
+  });
+
+  updateXcodeEntitlementsSetting(pbxprojPath, iosPath, entitlementsPaths[0]);
 
   console.log(`   Registered ${associatedDomains.length} associated domain(s)`);
 }
@@ -519,11 +523,15 @@ function findIosProjectName(iosPath) {
   return projects[0] || null;
 }
 
-function resolveEntitlementsPath(iosPath, projectName, pbxprojPath) {
+// Returns every entitlements file the project can sign with, not just one.
+// Each build configuration has its own (Debug/Release/…), and the domains have
+// to land in whichever file the build actually uses — writing only the first
+// one leaves release builds without Associated Domains.
+function resolveEntitlementsPaths(iosPath, projectName, pbxprojPath) {
   const defaultPath = path.join(iosPath, projectName, `${projectName}.entitlements`);
 
   if (!fs.existsSync(pbxprojPath)) {
-    return defaultPath;
+    return [defaultPath];
   }
 
   const pbxContent = fs.readFileSync(pbxprojPath, 'utf8');
@@ -555,20 +563,19 @@ function resolveEntitlementsPath(iosPath, projectName, pbxprojPath) {
     }
 
     const resolved = path.join(iosPath, raw);
-    candidates.push(resolved);
+
+    if (!candidates.includes(resolved)) {
+      candidates.push(resolved);
+    }
   }
 
-  // Prefer first candidate whose file already exists; otherwise first candidate
-  const existing = candidates.find(p => fs.existsSync(p));
-  if (existing) {
-    return existing;
+  if (!candidates.length) {
+    return [defaultPath];
   }
 
-  if (candidates.length > 0) {
-    return candidates[0];
-  }
-
-  return defaultPath;
+  // Existing files first, so the one the build already signs with is the path
+  // handed to updateXcodeEntitlementsSetting as a fallback reference.
+  return candidates.sort((a, b) => fs.existsSync(b) - fs.existsSync(a));
 }
 
 function writeAssociatedDomainsEntitlements(entitlementsPath, associatedDomains) {
@@ -602,22 +609,26 @@ function updateXcodeEntitlementsSetting(pbxprojPath, iosPath, entitlementsPath) 
     return;
   }
 
+  const content = fs.readFileSync(pbxprojPath, 'utf8');
+
+  // Never rewrite settings that are already there. Each build configuration
+  // points at its own entitlements file, so forcing them all onto one path
+  // makes release builds sign with the debug entitlements (get-task-allow,
+  // aps-environment=development) and the signature is rejected or stripped.
+  if (/CODE_SIGN_ENTITLEMENTS\s*=\s*[^;]+;/.test(content)) {
+    console.log('   Code Sign Entitlements already configured');
+    return;
+  }
+
   const relativePath = path.relative(iosPath, entitlementsPath).split(path.sep).join('/');
   const setting = `CODE_SIGN_ENTITLEMENTS = "${relativePath}";`;
-  const content = fs.readFileSync(pbxprojPath, 'utf8');
-  let updated = content;
-
-  if (/CODE_SIGN_ENTITLEMENTS = [^;]+;/g.test(updated)) {
-    updated = updated.replace(/CODE_SIGN_ENTITLEMENTS = [^;]+;/g, setting);
-  } else {
-    updated = updated.replace(/buildSettings = \{/g, `buildSettings = {\n\t\t\t\t${setting}`);
-  }
+  const updated = content.replace(/buildSettings = \{/g, `buildSettings = {\n\t\t\t\t${setting}`);
 
   if (updated !== content) {
     fs.writeFileSync(pbxprojPath, updated, 'utf8');
     console.log(`   Code Sign Entitlements set to ${relativePath}`);
   } else {
-    console.log('   Code Sign Entitlements already configured');
+    console.log('   Could not set Code Sign Entitlements (no buildSettings block found)');
   }
 }
 
