@@ -23,8 +23,9 @@ module.exports = async function registerUniversalLinks(context) {
 
   const root = context.opts.projectRoot;
   const config = readUniversalLinksConfig(context, root);
+  const urlScheme = readUrlScheme(context, path.join(root, 'config.xml'));
 
-  if (!config.hosts.length) {
+  if (!config.hosts.length && !urlScheme) {
     console.log('   No universal links configured, skipping');
     console.log('=======================================\n');
     return;
@@ -32,12 +33,16 @@ module.exports = async function registerUniversalLinks(context) {
 
   console.log(`   Found ${config.hosts.length} host(s)`);
 
+  if (urlScheme) {
+    console.log(`   Custom URL scheme: ${urlScheme}://`);
+  }
+
   if (platforms.includes('android')) {
-    registerAndroidUniversalLinks(root, config.hosts);
+    registerAndroidUniversalLinks(root, config.hosts, urlScheme);
   }
 
   if (platforms.includes('ios')) {
-    registerIosUniversalLinks(root, config.hosts);
+    registerIosUniversalLinks(root, config.hosts, urlScheme);
   }
 
   console.log('=======================================\n');
@@ -83,6 +88,42 @@ function readPreferenceUniversalLinks(context, configXmlPath) {
   }
 
   return hosts;
+}
+
+// Optional fallback for apps that hand links straight to a browser instead of
+// letting iOS resolve the universal link (Google Chat, Gmail, in-app browsers).
+function readUrlScheme(context, configXmlPath) {
+  let configParser;
+
+  try {
+    configParser = getConfigParser(context, configXmlPath);
+  } catch (error) {
+    return null;
+  }
+
+  const value = getPreferenceValues(configParser, 'URL_SCHEME')[0];
+
+  return normalizeUrlScheme(value);
+}
+
+function normalizeUrlScheme(value) {
+  const scheme = String(value || '')
+    .trim()
+    .replace(/:\/\/$/, '')
+    .replace(/:$/, '')
+    .toLowerCase();
+
+  if (!scheme) {
+    return null;
+  }
+
+  // RFC 3986: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+  if (!/^[a-z][a-z0-9+.-]*$/.test(scheme)) {
+    console.log(`   Ignoring invalid URL_SCHEME "${value}"`);
+    return null;
+  }
+
+  return scheme;
 }
 
 function getPreferenceValues(configParser, name) {
@@ -301,7 +342,7 @@ function normalizePath(linkPath) {
   return cleanValue.startsWith('/') ? cleanValue : `/${cleanValue}`;
 }
 
-function registerAndroidUniversalLinks(root, hosts) {
+function registerAndroidUniversalLinks(root, hosts, urlScheme) {
   const manifestPath = findAndroidManifestPath(root);
 
   console.log('\n   Android');
@@ -320,7 +361,7 @@ function registerAndroidUniversalLinks(root, hosts) {
     return;
   }
 
-  const filters = buildAndroidIntentFilters(hosts);
+  const filters = buildAndroidIntentFilters(hosts, urlScheme);
   const updatedActivity = insertIntoActivity(mainActivity.block, filters);
   const updatedContent = cleanContent.slice(0, mainActivity.start) +
     updatedActivity +
@@ -423,7 +464,7 @@ function isLauncherActivity(activityBlock) {
          stripped.includes('android.intent.category.LAUNCHER');
 }
 
-function buildAndroidIntentFilters(hosts) {
+function buildAndroidIntentFilters(hosts, urlScheme) {
   const filters = [];
 
   hosts.forEach(host => {
@@ -432,7 +473,24 @@ function buildAndroidIntentFilters(hosts) {
     });
   });
 
+  if (urlScheme) {
+    filters.push(buildAndroidSchemeIntentFilter(urlScheme));
+  }
+
   return `\n        ${MARKER_START}\n${filters.join('\n')}\n        ${MARKER_END}`;
+}
+
+// No autoVerify here: a custom scheme is owned by the app, not verified against
+// a domain, so Android grants it without assetlinks.json.
+function buildAndroidSchemeIntentFilter(urlScheme) {
+  return [
+    '        <intent-filter>',
+    '            <action android:name="android.intent.action.VIEW" />',
+    '            <category android:name="android.intent.category.DEFAULT" />',
+    '            <category android:name="android.intent.category.BROWSABLE" />',
+    `            <data android:scheme="${escapeXmlAttribute(urlScheme)}" />`,
+    '        </intent-filter>'
+  ].join('\n');
 }
 
 function buildAndroidIntentFilter(host, linkPath) {
@@ -484,7 +542,7 @@ function countAndroidPaths(hosts) {
   return hosts.reduce((total, host) => total + host.paths.length, 0);
 }
 
-function registerIosUniversalLinks(root, hosts) {
+function registerIosUniversalLinks(root, hosts, urlScheme) {
   const iosPath = path.join(root, 'platforms', 'ios');
 
   console.log('\n   iOS');
@@ -501,6 +559,14 @@ function registerIosUniversalLinks(root, hosts) {
     return;
   }
 
+  if (urlScheme) {
+    registerIosUrlScheme(iosPath, projectName, urlScheme);
+  }
+
+  if (!hosts.length) {
+    return;
+  }
+
   const pbxprojPath = path.join(iosPath, `${projectName}.xcodeproj`, 'project.pbxproj');
   const entitlementsPaths = resolveEntitlementsPaths(iosPath, projectName, pbxprojPath);
   const associatedDomains = unique(hosts.map(host => `applinks:${host.name}`));
@@ -513,6 +579,45 @@ function registerIosUniversalLinks(root, hosts) {
   updateXcodeEntitlementsSetting(pbxprojPath, iosPath, entitlementsPaths[0]);
 
   console.log(`   Registered ${associatedDomains.length} associated domain(s)`);
+}
+
+function registerIosUrlScheme(iosPath, projectName, urlScheme) {
+  const infoPlistPath = path.join(iosPath, projectName, `${projectName}-Info.plist`);
+
+  if (!fs.existsSync(infoPlistPath)) {
+    console.log('   Info.plist not found; URL scheme not registered');
+    return;
+  }
+
+  let info;
+
+  try {
+    info = plist.parse(fs.readFileSync(infoPlistPath, 'utf8')) || {};
+  } catch (error) {
+    console.log(`   Could not parse Info.plist, URL scheme not registered: ${error.message}`);
+    return;
+  }
+
+  const urlTypes = Array.isArray(info.CFBundleURLTypes) ? info.CFBundleURLTypes : [];
+  const alreadyRegistered = urlTypes.some(entry =>
+    Array.isArray(entry && entry.CFBundleURLSchemes) &&
+    entry.CFBundleURLSchemes.includes(urlScheme));
+
+  if (alreadyRegistered) {
+    console.log(`   URL scheme ${urlScheme}:// already in Info.plist`);
+    return;
+  }
+
+  urlTypes.push({
+    CFBundleTypeRole: 'Editor',
+    CFBundleURLName: projectName,
+    CFBundleURLSchemes: [urlScheme]
+  });
+
+  info.CFBundleURLTypes = urlTypes;
+  fs.writeFileSync(infoPlistPath, plist.build(info), 'utf8');
+
+  console.log(`   URL scheme ${urlScheme}:// registered in Info.plist`);
 }
 
 function findIosProjectName(iosPath) {

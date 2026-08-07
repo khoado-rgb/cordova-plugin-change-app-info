@@ -93,6 +93,25 @@ static NSURL *CAIPendingURL = nil;
                                              selector:@selector(handleUniversalLink:)
                                                  name:CAIUniversalLinkNotification
                                                object:nil];
+
+    // Custom URL schemes need no swizzling: cordova-ios already implements
+    // application:openURL:options: and posts this for every plugin. Apps that
+    // refuse to honour universal links (Google Chat, in-app browsers) can still
+    // reach the app through a scheme, and it lands on the same JS callback.
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleOpenURL:)
+                                                 name:CDVPluginHandleOpenURLNotification
+                                               object:nil];
+}
+
+- (void)handleOpenURL:(NSNotification *)notification
+{
+    NSURL *url = notification.object;
+
+    if ([url isKindOfClass:[NSURL class]]) {
+        NSLog(@"[UniversalLinks] Received via custom scheme %@", url.absoluteString);
+        [self deliverURL:url];
+    }
 }
 
 - (void)dispose
