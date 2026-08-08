@@ -305,7 +305,7 @@ public class CSSInjector extends CordovaPlugin {
                     if (backgroundColor != null && !backgroundColor.isEmpty()) {
                         injectBackgroundColorCSS(backgroundColor);
                     }
-                    injectCSSIntoWebView();
+                    injectCSSIntoWebView(false);
 
                     injectionAttempts++;
 
@@ -416,7 +416,7 @@ public class CSSInjector extends CordovaPlugin {
             if (backgroundColor != null && !backgroundColor.isEmpty()) {
                 injectBackgroundColorCSS(backgroundColor);
             }
-            injectCSSIntoWebView();
+            injectCSSIntoWebView(false);
             initialInjectionDone = true;
             android.util.Log.d(TAG, "onResume - immediate injection");
         }
@@ -458,7 +458,7 @@ public class CSSInjector extends CordovaPlugin {
                 injectBackgroundColorCSS(backgroundColor);
             }
             injectBuildConfig();
-            injectCSSIntoWebView();
+            injectCSSIntoWebView(false);
         }
         return null;
     }
@@ -782,7 +782,7 @@ public class CSSInjector extends CordovaPlugin {
         }
 
         if (action.equals("injectCSS")) {
-            injectCSSIntoWebView();
+            injectCSSIntoWebView(true);
             callbackContext.success("CSS injected");
             return true;
         } else if (action.equals("getConfig")) {
@@ -979,14 +979,18 @@ public class CSSInjector extends CordovaPlugin {
             .replace("\r", "");
     }
 
-    private void injectCSSIntoWebView() {
+    private void injectCSSIntoWebView(final boolean force) {
         cordova.getActivity().runOnUiThread(() -> {
             try {
                 // The stylesheet is the expensive payload (hundreds of KB once
                 // encoded); without this the polling loop marshalled it across
                 // the bridge on every tick even though the page-side guard
                 // already stopped it being applied twice.
-                if (cssInjected) {
+                //
+                // force is set by the injectCSS action, whose documented purpose
+                // is re-injecting at runtime — skipping that would turn the
+                // public API into a silent no-op.
+                if (cssInjected && !force) {
                     return;
                 }
 
