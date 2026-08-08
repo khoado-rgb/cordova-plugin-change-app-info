@@ -37,11 +37,59 @@ public class CSSInjector extends CordovaPlugin {
     private String cssInlineScript = null;
     private int injectionAttempts = 0;
     private static final int MAX_INJECTION_ATTEMPTS = 10;
+
+    // Injection state for the document currently loaded. Reset on navigation:
+    // a new document drops the injected globals and <style> element, so the
+    // work has to be redone once per document, not once per process.
+    private volatile boolean configInjected = false;
+    private volatile boolean cssInjected = false;
+
+    // When true the platform re-runs our scripts at document start, so the
+    // polling loop and the onPageFinished/onResume re-injection are redundant.
+    private volatile boolean documentStartRegistered = false;
+
+    // Hosts covered by the registered document-start rules.
+    private final java.util.Set<String> documentStartHosts = new java.util.HashSet<>();
+
+    private static final String OUTSYSTEMS_SCHEME = "outsystems";
     private static final java.util.regex.Pattern HEX_COLOR_PATTERN = 
         java.util.regex.Pattern.compile("^#?([A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$");
 
     private boolean isValidHexColor(String color) {
         return color != null && HEX_COLOR_PATTERN.matcher(color.trim()).matches();
+    }
+
+    /**
+     * Run JavaScript in the WebView.
+     *
+     * Prefers evaluateJavascript: loadUrl("javascript:…") is deprecated, caps
+     * the payload at the platform URL length limit (the CDN stylesheet is
+     * several hundred KB once encoded) and pushes a history entry. Falls back
+     * to loadUrl when the engine is not a system WebView.
+     *
+     * Callers are already on the UI thread.
+     */
+    private void runJavaScript(String javascript) {
+        CordovaWebView cordovaWebView = this.webView;
+
+        if (cordovaWebView == null || javascript == null) {
+            return;
+        }
+
+        try {
+            android.view.View engineView = cordovaWebView.getEngine() != null
+                ? cordovaWebView.getEngine().getView()
+                : null;
+
+            if (engineView instanceof android.webkit.WebView) {
+                ((android.webkit.WebView) engineView).evaluateJavascript(javascript, null);
+                return;
+            }
+        } catch (Throwable error) {
+            android.util.Log.w(TAG, "evaluateJavascript unavailable, falling back to loadUrl", error);
+        }
+
+        cordovaWebView.loadUrl("javascript:" + javascript);
     }
 
     /**
@@ -221,10 +269,15 @@ public class CSSInjector extends CordovaPlugin {
         buildCSSInlineScript();
         
         handler = new Handler(Looper.getMainLooper());
-        
-        // Start aggressive polling injection
-        startPollingInjection();
-        
+
+        // Preferred path: let the platform run our scripts at document start.
+        // Only fall back to polling when the WebView is too old to support it.
+        documentStartRegistered = installDocumentStartScripts();
+
+        if (!documentStartRegistered) {
+            startPollingInjection();
+        }
+
         android.util.Log.d(TAG, "=== CSSInjector pluginInitialize END ===");
     }
 
@@ -236,18 +289,26 @@ public class CSSInjector extends CordovaPlugin {
         handler.post(new Runnable() {
             @Override
             public void run() {
+                // Both landed, so there is nothing left to retry. Without this
+                // the loop always ran its full 10 rounds, re-sending the
+                // stylesheet long after the first attempt had succeeded.
+                if (configInjected && cssInjected) {
+                    android.util.Log.d(TAG, "[Polling] Stopped after " + injectionAttempts + " attempt(s) - injection complete");
+                    return;
+                }
+
                 if (injectionAttempts < MAX_INJECTION_ATTEMPTS) {
                     android.util.Log.d(TAG, "[Polling] Injection attempt #" + (injectionAttempts + 1));
-                    
+
                     // Try to inject
                     injectBuildConfig();
                     if (backgroundColor != null && !backgroundColor.isEmpty()) {
                         injectBackgroundColorCSS(backgroundColor);
                     }
                     injectCSSIntoWebView();
-                    
+
                     injectionAttempts++;
-                    
+
                     // Schedule next attempt
                     handler.postDelayed(this, 200);
                 } else {
@@ -349,7 +410,7 @@ public class CSSInjector extends CordovaPlugin {
     public void onResume(boolean multitasking) {
         super.onResume(multitasking);
         
-        if (!initialInjectionDone) {
+        if (!initialInjectionDone && !documentStartCoversOrigin(webView != null ? webView.getUrl() : null)) {
             // Inject immediately
             injectBuildConfig();
             if (backgroundColor != null && !backgroundColor.isEmpty()) {
@@ -377,10 +438,22 @@ public class CSSInjector extends CordovaPlugin {
     public Object onMessage(String id, Object data) {
         if (id == null) return null;
         if ("onPageStarted".equals(id)) {
+            // A new document is coming: whatever we injected belonged to the
+            // old one and is gone, so allow the work to run again.
+            configInjected = false;
+            cssInjected = false;
+
             // Bypass the safe-origin gate here: we are *about* to navigate
             // to this URL and we are only painting our own background color.
             injectEarlyBackgroundCSS();
         } else if ("onPageFinished".equals(id) || "onReceivedError".equals(id)) {
+            // Already delivered at document start; repeating it here would push
+            // the stylesheet across the bridge again for no benefit. Origins the
+            // rules cannot express (file://) still take the legacy path.
+            if (documentStartCoversOrigin(webView != null ? webView.getUrl() : null)) {
+                return null;
+            }
+
             if (backgroundColor != null && !backgroundColor.isEmpty()) {
                 injectBackgroundColorCSS(backgroundColor);
             }
@@ -439,7 +512,7 @@ public class CSSInjector extends CordovaPlugin {
                     "if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',ap);" +
                     "})();";
 
-                cordovaWebView.loadUrl("javascript:" + javascript);
+                runJavaScript(javascript);
                 android.util.Log.d(TAG, "[Early-BG] injected on onPageStarted: " + bgColor);
             } catch (Exception e) {
                 android.util.Log.e(TAG, "Early BG injection failed", e);
@@ -448,56 +521,226 @@ public class CSSInjector extends CordovaPlugin {
     }
 
     /**
+     * Build the JS that publishes the build config on window.
+     * Returns null when there is no config to publish.
+     */
+    private String buildConfigInjectionScript() {
+        try {
+            JSONObject config = cachedConfig;
+            if (config == null) {
+                config = readConfigFromAssets();
+                cachedConfig = config;
+            }
+
+            if (config == null) {
+                return null;
+            }
+
+            if (backgroundColor != null && !backgroundColor.isEmpty()) {
+                config.put("backgroundColor", backgroundColor);
+            }
+
+            String escapedJSON = config.toString()
+                .replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n");
+
+            return "(function() {" +
+                "  try {" +
+                "    if (typeof window === 'undefined') return;" +
+                "    var config = JSON.parse(\"" + escapedJSON + "\");" +
+                "    window.CORDOVA_BUILD_CONFIG = config;" +
+                "    window.AppConfig = config;" +
+                "    console.log('[Native-JS] Build config injected:', config);" +
+                "    " +
+                "    if (typeof CustomEvent !== 'undefined') {" +
+                "      window.dispatchEvent(new CustomEvent('cordova-config-ready', { detail: config }));" +
+                "    }" +
+                "  } catch(e) {" +
+                "    console.error('[Native-JS] Config injection failed:', e);" +
+                "  }" +
+                "})();";
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "Failed to build config script", e);
+            return null;
+        }
+    }
+
+    /**
+     * Register the config and stylesheet scripts to run at document start.
+     *
+     * This is the Android counterpart of iOS's WKUserScript: the platform
+     * re-runs the script for every document in the WebView, before the page's
+     * own JavaScript. That removes the polling loop entirely, stops the
+     * stylesheet being pushed across the bridge more than once, and closes the
+     * window where window.AppConfig was still undefined after a reload.
+     *
+     * Requires WebView 83+; callers fall back to the polling path when the
+     * feature is unavailable.
+     *
+     * @return true when the scripts were registered
+     */
+    private boolean installDocumentStartScripts() {
+        try {
+            if (!androidx.webkit.WebViewFeature.isFeatureSupported(
+                    androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                android.util.Log.d(TAG, "DOCUMENT_START_SCRIPT unsupported, using polling fallback");
+                return false;
+            }
+
+            CordovaWebView cordovaWebView = this.webView;
+            android.view.View engineView = cordovaWebView != null && cordovaWebView.getEngine() != null
+                ? cordovaWebView.getEngine().getView()
+                : null;
+
+            if (!(engineView instanceof android.webkit.WebView)) {
+                return false;
+            }
+
+            java.util.Set<String> originRules = buildAllowedOriginRules();
+
+            // Never fall back to "*": that would hand the config to any origin
+            // the WebView happens to load, which isCurrentOriginSafe() exists
+            // precisely to prevent.
+            if (originRules.isEmpty()) {
+                android.util.Log.d(TAG, "No allowed origins resolved, using polling fallback");
+                return false;
+            }
+
+            StringBuilder script = new StringBuilder();
+
+            String configScriptSource = buildConfigInjectionScript();
+            if (configScriptSource != null) {
+                script.append(configScriptSource);
+            }
+
+            if (backgroundColor != null && !backgroundColor.isEmpty()) {
+                String safeColor = normalizeHexForCss(backgroundColor);
+                if (isValidHexColor(safeColor)) {
+                    String css = "html, body { " +
+                        "background-color: " + safeColor + " !important; " +
+                        "background: " + safeColor + " !important; " +
+                        "margin: 0; padding: 0; " +
+                        "}";
+                    script.append(buildBackgroundGuardScript(safeColor, css));
+                }
+            }
+
+            String cssContent = cachedCSS;
+            if (cssContent == null || cssContent.isEmpty()) {
+                cssContent = readCSSFromAssets();
+                cachedCSS = cssContent;
+            }
+            if (cssContent != null && !cssContent.isEmpty()) {
+                script.append(buildCSSInjectionScript(cssContent));
+            }
+
+            if (script.length() == 0) {
+                return false;
+            }
+
+            androidx.webkit.WebViewCompat.addDocumentStartJavaScript(
+                (android.webkit.WebView) engineView, script.toString(), originRules);
+
+            android.util.Log.d(TAG, "Document-start script registered for " + originRules
+                + " (" + script.length() + " bytes)");
+            return true;
+        } catch (Throwable error) {
+            android.util.Log.w(TAG, "Could not register document-start script, using polling fallback", error);
+            return false;
+        }
+    }
+
+    /**
+     * Origins allowed to receive the injected scripts, mirroring isSafeOrigin().
+     *
+     * isSafeOrigin() also accepts file:///android_asset/www/, which cannot be
+     * expressed as a rule here — the documented formats cover http/https hosts
+     * and custom schemes only. Those pages stay on the legacy path, which is
+     * why documentStartCoversOrigin() is consulted before skipping it.
+     */
+    private java.util.Set<String> buildAllowedOriginRules() {
+        java.util.Set<String> rules = new java.util.HashSet<>();
+
+        documentStartHosts.clear();
+
+        // cordova-android serves the local assets from here.
+        addHostRule(rules, "localhost");
+        addHostRule(rules, preferences.getString("DefaultHostname", ""));
+        addHostRule(rules, preferences.getString("hostname", ""));
+
+        // Custom-scheme rules take the form "scheme://" with no host or port.
+        rules.add(OUTSYSTEMS_SCHEME + "://");
+
+        return rules;
+    }
+
+    private void addHostRule(java.util.Set<String> rules, String host) {
+        if (host == null) {
+            return;
+        }
+
+        String normalized = host.trim().toLowerCase(Locale.US);
+
+        // A rule is "scheme://host[:port]"; anything with a path is not a host.
+        if (normalized.isEmpty() || normalized.indexOf('/') >= 0) {
+            return;
+        }
+
+        rules.add("https://" + normalized);
+        documentStartHosts.add(normalized);
+    }
+
+    /**
+     * True when the document-start script already covers this URL, so the
+     * onPageFinished path can be skipped without leaving the page unstyled.
+     */
+    private boolean documentStartCoversOrigin(String url) {
+        if (!documentStartRegistered || url == null || url.isEmpty()) {
+            return false;
+        }
+
+        Uri uri = Uri.parse(url);
+        String scheme = uri.getScheme();
+        String host = uri.getHost();
+
+        if (OUTSYSTEMS_SCHEME.equals(scheme)) {
+            return true;
+        }
+
+        if (!"https".equals(scheme) || host == null) {
+            return false;
+        }
+
+        return documentStartHosts.contains(host.toLowerCase(Locale.US));
+    }
+
+    /**
      * Inject build config from JSON file into window variable
      */
     private void injectBuildConfig() {
         cordova.getActivity().runOnUiThread(() -> {
             try {
+                if (configInjected) {
+                    return;
+                }
+
                 if (!isCurrentOriginSafe()) {
                     return;
                 }
 
-                JSONObject config = cachedConfig;
-                if (config == null) {
-                    config = readConfigFromAssets();
-                    cachedConfig = config;
-                }
-                
-                if (config == null) {
+                String javascript = buildConfigInjectionScript();
+
+                if (javascript == null) {
                     android.util.Log.w(TAG, "No config found, skipping injection");
                     return;
                 }
-                
-                if (backgroundColor != null && !backgroundColor.isEmpty()) {
-                    config.put("backgroundColor", backgroundColor);
-                }
-                
-                String configJSON = config.toString();
-                String escapedJSON = configJSON
-                    .replace("\\", "\\\\")
-                    .replace("'", "\\'")
-                    .replace("\"", "\\\"")
-                    .replace("\n", "\\n");
-                
+
                 CordovaWebView cordovaWebView = this.webView;
                 if (cordovaWebView != null) {
-                    String javascript = "(function() {" +
-                        "  try {" +
-                        "    if (typeof window === 'undefined') return;" +
-                        "    var config = JSON.parse(\"" + escapedJSON + "\");" +
-                        "    window.CORDOVA_BUILD_CONFIG = config;" +
-                        "    window.AppConfig = config;" +
-                        "    console.log('[Native-JS] Build config injected:', config);" +
-                        "    " +
-                        "    if (typeof CustomEvent !== 'undefined') {" +
-                        "      window.dispatchEvent(new CustomEvent('cordova-config-ready', { detail: config }));" +
-                        "    }" +
-                        "  } catch(e) {" +
-                        "    console.error('[Native-JS] Config injection failed:', e);" +
-                        "  }" +
-                        "})();";
-                    
-                    cordovaWebView.loadUrl("javascript:" + javascript);
+                    runJavaScript(javascript);
+                    configInjected = true;
                     android.util.Log.d(TAG, "[JS] Config injected");
                 }
             } catch (Exception e) {
@@ -620,7 +863,7 @@ public class CSSInjector extends CordovaPlugin {
                     
                     String javascript = buildBackgroundGuardScript(bgColor, css);
                     
-                    cordovaWebView.loadUrl("javascript:" + javascript);
+                    runJavaScript(javascript);
                 }
             } catch (Exception e) {
                 android.util.Log.e(TAG, "Background CSS failed", e);
@@ -739,6 +982,14 @@ public class CSSInjector extends CordovaPlugin {
     private void injectCSSIntoWebView() {
         cordova.getActivity().runOnUiThread(() -> {
             try {
+                // The stylesheet is the expensive payload (hundreds of KB once
+                // encoded); without this the polling loop marshalled it across
+                // the bridge on every tick even though the page-side guard
+                // already stopped it being applied twice.
+                if (cssInjected) {
+                    return;
+                }
+
                 if (!isCurrentOriginSafe()) {
                     return;
                 }
@@ -753,7 +1004,8 @@ public class CSSInjector extends CordovaPlugin {
                     CordovaWebView cordovaWebView = this.webView;
                     if (cordovaWebView != null) {
                         String javascript = buildCSSInjectionScript(cssContent);
-                        cordovaWebView.loadUrl("javascript:" + javascript);
+                        runJavaScript(javascript);
+                        cssInjected = true;
                         android.util.Log.d(TAG, "[JS] CSS injected (" + cssContent.length() + " bytes)");
                     }
                 } else {
