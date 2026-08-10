@@ -151,11 +151,26 @@ class CSSInjector: CDVPlugin {
                     // navigation, and survives screen changes because
                     // documentElement is never replaced. Values come from the
                     // parsed JSON, not string concatenation.
-                    if (config.primaryColor && config.primaryColorVar) {
-                        document.documentElement.style.setProperty(
-                            config.primaryColorVar, config.primaryColor, 'important');
+                    //
+                    // Self-contained: at document start documentElement may not
+                    // exist yet, and letting that throw here would also skip the
+                    // cordova-config-ready dispatch below.
+                    function applyBrandColor() {
+                        try {
+                            var root = document.documentElement;
+                            if (!root || !root.style) { return false; }
+                            if (!config.primaryColor || !config.primaryColorVar) { return true; }
+                            root.style.setProperty(config.primaryColorVar, config.primaryColor, 'important');
+                            return true;
+                        } catch (err) {
+                            return false;
+                        }
                     }
-                    
+
+                    if (!applyBrandColor()) {
+                        document.addEventListener('DOMContentLoaded', applyBrandColor);
+                    }
+
                     // Dispatch event when DOM is ready
                     if (document.readyState === 'loading') {
                         document.addEventListener('DOMContentLoaded', function() {
