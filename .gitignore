@@ -40,3 +40,13 @@ node_modules
 .gitnexus/
 AGENTS.md
 CLAUDE.md
+
+# Working notes with environment-specific identifiers — never commit
+/FINAL_COMPARISON_REPORT.md
+/IPA_COMPARISON.md
+/REBUILD_NOW.md
+/docs/DEBUG_UNIVERSAL_LINKS_DEVICE.md
+/test-bug.js
+/test-entitlements.js
+/test-fix-hook.js
+/.codex/
