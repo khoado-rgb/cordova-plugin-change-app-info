@@ -406,8 +406,7 @@ scripts/
 | [Native Config Injection](docs/NATIVE_CONFIG_INJECTION.md) | How native injection works |
 | [OutSystems Integration](docs/OUTSYSTEMS_INTEGRATION.md) | OutSystems setup guide |
 | [Installation Guide](docs/INSTALLATION_GUIDE.md) | Detailed installation steps |
-| [Universal Links Debug](docs/UNIVERSAL_LINKS_DEBUG.md) | Links not opening the app |
-| [Fix Universal Links](docs/FIX_UNIVERSAL_LINKS.md) | Entitlements and MABS build issues |
+| [Universal Links & App Links](docs/UNIVERSAL_LINKS.md) | Setup, server files, and diagnostics |
 
 ## License
 
