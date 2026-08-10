@@ -2,7 +2,7 @@
 
 > Cordova plugin to change app display name, version, and icon from CDN at build time. Includes E2EE TOTP security, native config injection, gradient splash screens, and CSS/JS asset replacement.
 
-**Version:** 2.9.20  
+**Version:** 2.14.1  
 **License:** MIT  
 **Author:** vnkhoado
 
@@ -12,6 +12,9 @@
 - **CDN Icon** — Download and generate all icon sizes from a single CDN URL (1024×1024 PNG)
 - **CDN Resource** — Download CSS from CDN and inject into the app at build time
 - **Native Config Injection** — Build config available instantly via `window.CORDOVA_BUILD_CONFIG`
+- **Universal Links / App Links** — Register domains at build time and deliver the tapped URL to the app at runtime
+- **Custom URL Scheme** — Optional fallback for apps that hand links to a browser instead of the OS
+- **Brand Colour** — Resolve a primary colour at build time and apply it as a CSS custom property on every screen
 - **Gradient Splash Screens** — CSS gradient syntax for native splash screens on Android and iOS
 - **Color Customization** — Splash screen, status bar, and webview background colors
 - **E2EE TOTP** — RSA-2048 OAEP-SHA256 encryption with Android Keystore / iOS Keychain
@@ -34,7 +37,7 @@ cordova plugin add https://github.com/vnkhoado/cordova-plugin-change-app-info.gi
 Pin a specific version:
 
 ```bash
-cordova plugin add https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.9.20
+cordova plugin add https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.14.1
 ```
 
 ## Configuration
@@ -65,7 +68,7 @@ Add preferences to `config.xml`:
 ```json
 {
   "plugin": {
-    "url": "https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.9.20"
+    "url": "https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.14.1"
   },
   "preferences": {
     "global": [
@@ -107,6 +110,11 @@ Add preferences to `config.xml`:
 | `ENABLE_BUILD_NOTIFICATION` | Send POST after build | `"true"` |
 | `BUILD_SUCCESS_API_URL` | Notification endpoint | `"https://..."` |
 | `BUILD_API_BEARER_TOKEN` | Bearer token | `"token"` |
+| `UNIVERSAL_LINKS` | Domains/paths to claim (see below) | `"[\"app.example.com/orders/*\"]"` |
+| `UNIVERSAL_LINK_HOSTS` | Alias of `UNIVERSAL_LINKS`, merged with it | `"app.example.com"` |
+| `URL_SCHEME` | Custom scheme fallback, omit to disable | `"myapp"` |
+| `PRIMARY_COLOR` | Brand colour override (hex) | `"#112233"` |
+| `PRIMARY_COLOR_VAR` | CSS custom property to write | `"--color-primary"` |
 
 ### Custom Preferences (Auto-captured)
 
@@ -133,10 +141,124 @@ document.addEventListener('deviceready', function() {
   console.log(config.tenantId);      // "1234"
   console.log(config.platform);      // "android" or "ios"
   console.log(config.buildDate);     // ISO timestamp
+  console.log(config.primaryColor);  // "#112233"
 });
 ```
 
 `window.AppConfig` is also set as an alias.
+
+## Brand Colour
+
+The colour is resolved at build time in this order, first match wins:
+
+1. `PRIMARY_COLOR` preference
+2. `BackgroundColor` preference
+3. `--color-primary` in the stylesheet downloaded from `CDN_RESOURCE` (name overridable via `PRIMARY_COLOR_VAR`)
+
+Hex, `rgb()` and `rgba()` are accepted and normalised to hex; one level of `var()` indirection is resolved. Anything else — named colours, `url(...)`, malformed values — is rejected rather than passed through, because the value is serialised into the config injected into the page.
+
+Native then writes it inline on `documentElement`:
+
+```javascript
+document.documentElement.style.setProperty('--color-primary', '#112233', 'important');
+```
+
+Inline outranks any `:root` rule, including one from a stylesheet loaded later during SPA navigation, and the declaration survives screen changes because `documentElement` is never replaced. Nothing needs re-applying per screen.
+
+```javascript
+const color = cordova.plugins.CSSInjector.getPrimaryColor();   // "#112233"
+
+// For screens that load before native has injected
+cordova.plugins.CSSInjector.onConfigReady(function (config) {
+  console.log(config.primaryColor);
+});
+
+// Only if something in the app clears the style attribute
+cordova.plugins.CSSInjector.applyPrimaryColor();
+```
+
+`onConfigReady()` fires immediately when the config is already present, so registering late does not mean waiting on an event that has already been dispatched.
+
+## Universal Links
+
+Set `UNIVERSAL_LINKS` to the domains and paths the app should claim. A JSON array, a comma-separated list, or a single value all work; when unset, `API_HOSTNAME` is used as the host.
+
+```json
+{ "name": "UNIVERSAL_LINKS",
+  "value": "[\"app.example.com/orders\",\"app.example.com/orders/*\"]" }
+```
+
+At build time this writes `com.apple.developer.associated-domains` into every entitlements file the Xcode project references, and `<intent-filter android:autoVerify="true">` entries into the launcher activity.
+
+Paths matter on Android only — they become `android:path` / `android:pathPattern`, which are **case-sensitive** and match exactly. iOS ignores them: path matching there is governed entirely by the `apple-app-site-association` file on your server. Include both the bare path and the `/*` variant if you need the URL with and without a suffix.
+
+At runtime the tapped URL is delivered to JavaScript:
+
+```javascript
+cordova.plugins.UniversalLinks.subscribe(function (link) {
+  console.log(link.url);      // "https://app.example.com/orders/123?ref=x"
+  console.log(link.path);     // "/orders/123"
+  console.log(link.params);   // { ref: "x" }
+  // link.scheme, link.host, link.query, link.fragment
+});
+```
+
+A link that cold-started the app is held natively and replayed as soon as you subscribe, so calling this late is safe.
+
+### Server requirements
+
+Registration alone is not enough — both platforms verify against a file you host:
+
+| Platform | File | Notes |
+|---|---|---|
+| iOS | `/.well-known/apple-app-site-association` | Served as JSON, no redirects. Apple fetches via its CDN, so changes take up to an hour to propagate; devices only fetch at install time |
+| Android | `/.well-known/assetlinks.json` | Must return 200 **with no redirect** — the verifier refuses to follow them |
+
+Apple's `paths` matching is case-sensitive. Declaring `components` with `"caseSensitive": false` avoids that class of mismatch:
+
+```json
+{ "appID": "TEAMID.com.example.app",
+  "paths": ["/orders", "/orders/*"],
+  "components": [{ "/": "/orders", "caseSensitive": false },
+                 { "/": "/orders/*", "caseSensitive": false }] }
+```
+
+Check Android verification with:
+
+```bash
+adb shell pm get-app-links com.example.app     # want state 1, not 1024
+```
+
+### Custom URL scheme fallback
+
+Some apps — Chrome on iOS, Google Chat, in-app browsers — keep the URL instead of handing it to the OS, so the universal link never resolves. Setting `URL_SCHEME` registers a scheme those contexts can reach:
+
+```json
+{ "name": "URL_SCHEME", "value": "myapp" }
+```
+
+Scheme URLs arrive through the same `subscribe()` callback. Opening the app this way still needs a page-side affordance linking to `myapp://…`. Give each environment its own scheme so parallel installs do not collide. Leave the preference unset to disable the feature entirely.
+
+## JavaScript API
+
+### `cordova.plugins.CSSInjector`
+
+| Method | Returns | Description |
+|---|---|---|
+| `getConfig()` | `Object` | Build config, or `{}` if native has not injected yet. Synchronous |
+| `getPrimaryColor()` | `String\|null` | Resolved brand colour, e.g. `"#112233"` |
+| `applyPrimaryColor([varName])` | `Boolean` | Re-write the custom property on `:root` |
+| `onConfigReady(cb)` | — | Run `cb(config)` now if config is present, else on `cordova-config-ready` |
+| `injectCSS(ok, err)` | — | Force re-injection of the CDN stylesheet at runtime |
+
+### `cordova.plugins.UniversalLinks`
+
+| Method | Description |
+|---|---|
+| `subscribe(cb, err)` | Receive `{url, scheme, host, path, query, fragment, params}` for every link that opens the app, including the one that cold-started it |
+| `unsubscribe(ok, err)` | Stop receiving links |
+
+Native also dispatches `cordova-config-ready` on `window` with the config as `detail`.
 
 ## SecureTotp Plugin (E2EE)
 
@@ -175,8 +297,9 @@ cordova.plugins.SecureTotpPlugin.getTotpCode(6, 30, function(result) {
 | before_prepare | `hooks/downloadCDNResources.js` | Download CSS from CDN |
 | before_prepare | `scripts/auto-install-deps.js` | Install sharp/jimp if needed |
 | before_prepare | `hooks/backupAppInfo.js` | Backup original app info |
+| after_prepare | `hooks/registerUniversalLinks.js` | App Link intent-filters + custom scheme |
 | after_prepare | `hooks/android/unified-prepare.js` | App name, version, icons, splash |
-| after_prepare | `hooks/injectBuildInfo.js` | Write build config JSON |
+| after_prepare | `hooks/injectBuildInfo.js` | Write build config JSON (incl. brand colour) |
 | after_prepare | `hooks/customizeColors.js` | Apply color preferences |
 | before_compile | `hooks/android/unified-compile.js` | Final native file overrides |
 | after_build | `hooks/sendBuildSuccess.js` | POST build notification |
@@ -191,7 +314,9 @@ cordova.plugins.SecureTotpPlugin.getTotpCode(6, 30, function(result) {
 | before_prepare | `hooks/ios-cache-clear.js` | Clear icon/name cache |
 | after_prepare | `hooks/ios/unified-prepare-standalone.js` | App name, version, icons, splash |
 | after_prepare | `hooks/ios/inject-gradient-splash.js` | Gradient splash images |
-| after_prepare | `hooks/injectBuildInfo.js` | Write build config JSON |
+| after_prepare | `hooks/registerUniversalLinks.js` | Associated domains + URL scheme in Info.plist |
+| after_prepare | `hooks/ios/fix-universal-links-entitlements.js` | Domains into every MABS entitlements file |
+| after_prepare | `hooks/injectBuildInfo.js` | Write build config JSON (incl. brand colour) |
 | after_prepare | `hooks/customizeColors.js` | Apply color preferences |
 | before_compile | `hooks/ios/force-metadata-override.js` | Force Info.plist overrides |
 | before_compile | `hooks/ios/fix-splash-flicker.js` | Remove UILaunchStoryboardName |
@@ -201,7 +326,7 @@ cordova.plugins.SecureTotpPlugin.getTotpCode(6, 30, function(result) {
 ## Project Structure
 
 ```
-plugin.xml                           # Plugin manifest (v2.9.20)
+plugin.xml                           # Plugin manifest (v2.14.1)
 package.json                         # npm metadata & dependencies
 src/
   android/
@@ -209,6 +334,7 @@ src/
     LogUtil.java                     # Debug-only logging utility
     SecureTotpManager.java           # RSA key management + TOTP generation
     SecureTotpPlugin.java            # Cordova bridge for TOTP actions
+    UniversalLinksPlugin.java        # Deliver App Link / scheme URLs to JS
     res/values/colors.xml            # Default color resources
     res/values/styles.xml            # Default theme styles
     res/values-night/colors.xml      # Dark mode colors
@@ -219,9 +345,11 @@ src/
 www/
     CSSInjector.js                   # JS bridge for CSSInjector
     SecureTotpPlugin.js              # JS bridge for SecureTotpPlugin
+    UniversalLinks.js                # JS bridge for universal links
 hooks/
     utils.js                         # Shared utilities (image, color, config)
     downloadCDNResources.js          # CDN CSS download
+    registerUniversalLinks.js        # Entitlements, intent-filters, URL scheme
     backupAppInfo.js                 # Backup original app info
     changeAppInfo.js                 # Modify app name/version in native files
     generateIcons.js                 # Generate icon sizes from CDN image
@@ -248,8 +376,10 @@ hooks/
       fix-splash-flicker.js          # Remove UILaunchStoryboardName
       force-metadata-override.js     # Force Info.plist values
       inject-gradient-splash.js      # iOS gradient splash injection
+      fix-universal-links-entitlements.js  # Domains into all MABS entitlements
       gradient-generator.js          # iOS gradient image generation
     lib/
+      theme-color.js                 # Parse/normalise brand colour from CSS
       config-loader.js               # Node.js config loader (legacy)
       config-loader-mobile.js        # Mobile config loader (legacy)
     utils/
@@ -271,11 +401,13 @@ scripts/
 | [iOS CSS Injection Fix](docs/iOS-CSS-INJECTION-FIX.md) | WKUserScript timing fix |
 | [Gradient Implementation](docs/GRADIENT_IMPLEMENTATION.md) | CSS gradient splash screens |
 | [Red Flash Fix](docs/FIX_RED_FLASH.md) | Android red/purple flash fix |
-| [CDN Assets Guide](CDN_ASSETS_GUIDE.md) | Multi-asset CDN replacement |
-| [CDN Resource Downloader](CDN-RESOURCE-DOWNLOADER.md) | CSS download from CDN |
-| [Native Config Injection](NATIVE_CONFIG_INJECTION.md) | How native injection works |
-| [OutSystems Integration](OUTSYSTEMS_INTEGRATION.md) | OutSystems setup guide |
-| [Installation Guide](INSTALLATION_GUIDE.md) | Detailed installation steps |
+| [CDN Assets Guide](docs/CDN_ASSETS_GUIDE.md) | Multi-asset CDN replacement |
+| [CDN Resource Downloader](docs/CDN-RESOURCE-DOWNLOADER.md) | CSS download from CDN |
+| [Native Config Injection](docs/NATIVE_CONFIG_INJECTION.md) | How native injection works |
+| [OutSystems Integration](docs/OUTSYSTEMS_INTEGRATION.md) | OutSystems setup guide |
+| [Installation Guide](docs/INSTALLATION_GUIDE.md) | Detailed installation steps |
+| [Universal Links Debug](docs/UNIVERSAL_LINKS_DEBUG.md) | Links not opening the app |
+| [Fix Universal Links](docs/FIX_UNIVERSAL_LINKS.md) | Entitlements and MABS build issues |
 
 ## License
 
