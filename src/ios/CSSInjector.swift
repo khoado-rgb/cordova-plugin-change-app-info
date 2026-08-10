@@ -145,6 +145,16 @@ class CSSInjector: CDVPlugin {
                     window.CORDOVA_BUILD_CONFIG = config;
                     window.AppConfig = config;
                     console.log('[Native iOS UserScript] Config injected at document start');
+
+                    // Inline on documentElement so it outranks any :root rule
+                    // from a stylesheet OutSystems loads later during SPA
+                    // navigation, and survives screen changes because
+                    // documentElement is never replaced. Values come from the
+                    // parsed JSON, not string concatenation.
+                    if (config.primaryColor && config.primaryColorVar) {
+                        document.documentElement.style.setProperty(
+                            config.primaryColorVar, config.primaryColor, 'important');
+                    }
                     
                     // Dispatch event when DOM is ready
                     if (document.readyState === 'loading') {

@@ -44,6 +44,29 @@ var CSSInjector = {
     },
 
     /**
+     * Re-apply the brand colour as a CSS custom property on :root.
+     *
+     * Native already does this at document start, and the inline declaration
+     * survives SPA screen changes because documentElement is never replaced.
+     * Call this only if something in the app clears the style attribute.
+     *
+     * @param {String} [variableName] - defaults to the name used at build time
+     * @returns {Boolean} whether a colour was applied
+     */
+    applyPrimaryColor: function(variableName) {
+        var config = this.getConfig();
+        var color = config.primaryColor;
+        var name = variableName || config.primaryColorVar;
+
+        if (!color || !name || !/^--[a-zA-Z0-9_-]+$/.test(name)) {
+            return false;
+        }
+
+        document.documentElement.style.setProperty(name, color, 'important');
+        return true;
+    },
+
+    /**
      * Run a callback once the config is available.
      *
      * Native injects at document start, so on a screen that loads later the

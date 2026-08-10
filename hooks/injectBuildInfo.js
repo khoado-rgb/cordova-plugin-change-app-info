@@ -251,6 +251,13 @@ function createNativeConfig(buildInfo, wwwPath, root) {
   if (primaryColor && !nativeConfig.primaryColor) {
     nativeConfig.primaryColor = primaryColor;
   }
+
+  // The CSS custom property the web layer reads the brand colour from. Native
+  // sets it inline on documentElement, which outranks any :root rule a
+  // later-loading stylesheet declares.
+  if (nativeConfig.primaryColor) {
+    nativeConfig.primaryColorVar = themeColor.normalizeVariableName(buildInfo.primaryColorVar);
+  }
   
   const nativeConfigPath = path.join(wwwPath, 'cordova-build-config.json');
   return writeJSONWithVerification(nativeConfigPath, nativeConfig, 'cordova-build-config.json (native)');

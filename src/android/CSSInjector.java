@@ -554,6 +554,15 @@ public class CSSInjector extends CordovaPlugin {
                 "    window.AppConfig = config;" +
                 "    console.log('[Native-JS] Build config injected:', config);" +
                 "    " +
+                // Inline on documentElement so it outranks any :root rule from a
+                // stylesheet OutSystems loads later during SPA navigation, and
+                // survives screen changes because documentElement is never
+                // replaced. Values come from the parsed JSON, not concatenation.
+                "    if (config.primaryColor && config.primaryColorVar) {" +
+                "      document.documentElement.style.setProperty(" +
+                "        config.primaryColorVar, config.primaryColor, 'important');" +
+                "    }" +
+                "    " +
                 "    if (typeof CustomEvent !== 'undefined') {" +
                 "      window.dispatchEvent(new CustomEvent('cordova-config-ready', { detail: config }));" +
                 "    }" +

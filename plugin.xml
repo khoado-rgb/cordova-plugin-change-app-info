@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
     id="cordova-plugin-change-app-info"
-    version="2.13.0">
+    version="2.14.0">
     
     <name>Change App Info</name>
     <description>Cordova plugin to change app display name, version and icon from CDN at build time. E2EE Security for TOTP.</description>

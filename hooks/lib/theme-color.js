@@ -81,6 +81,23 @@ function parsePrimaryColor(css, variableNames) {
   return null;
 }
 
+/**
+ * The single custom-property name the web layer should read.
+ * Falls back to the first default when nothing valid is supplied.
+ */
+function normalizeVariableName(variableName) {
+  const name = String(variableName || '').trim();
+
+  if (!name) {
+    return DEFAULT_VARIABLE_NAMES[0];
+  }
+
+  const prefixed = name.startsWith('--') ? name : `--${name}`;
+
+  // Guard the value that native writes via style.setProperty().
+  return /^--[a-zA-Z0-9_-]+$/.test(prefixed) ? prefixed : DEFAULT_VARIABLE_NAMES[0];
+}
+
 function normalizeVariableNames(variableNames) {
   const provided = (Array.isArray(variableNames) ? variableNames : [variableNames])
     .map(name => String(name || '').trim())
@@ -210,5 +227,6 @@ module.exports = {
   readPrimaryColor,
   parsePrimaryColor,
   normalizeColor,
+  normalizeVariableName,
   DEFAULT_VARIABLE_NAMES
 };
