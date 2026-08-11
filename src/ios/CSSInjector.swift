@@ -284,19 +284,48 @@ class CSSInjector: CDVPlugin {
         
         let javascript = """
         (function() {
-            try {
-                if (!\(originGuard)) { return; }
-                if (!document.getElementById('cdn-injected-styles')) {
-                    var base64CSS = '\(base64CSS)';
-                    var decodedCSS = decodeURIComponent(escape(atob(base64CSS)));
-                    var style = document.createElement('style');
-                    style.id = 'cdn-injected-styles';
-                    style.textContent = decodedCSS;
-                    (document.head || document.documentElement).appendChild(style);
-                    console.log('[Native iOS UserScript] CDN CSS injected (\(css.count) bytes)');
+            if (!\(originGuard)) { return; }
+
+            function inject() {
+                try {
+                    var target = document.head || document.documentElement;
+                    if (!target) { return false; }
+                    if (!document.getElementById('cdn-injected-styles')) {
+                        var base64CSS = '\(base64CSS)';
+                        var decodedCSS = decodeURIComponent(escape(atob(base64CSS)));
+                        var style = document.createElement('style');
+                        style.id = 'cdn-injected-styles';
+                        style.textContent = decodedCSS;
+                        target.appendChild(style);
+                        console.log('[Native iOS UserScript] CDN CSS injected (\(css.count) bytes)');
+                    }
+                    return true;
+                } catch(e) {
+                    console.error('[Native iOS UserScript] CSS injection failed:', e);
+                    return false;
                 }
-            } catch(e) {
-                console.error('[Native iOS UserScript] CSS injection failed:', e);
+            }
+
+            // At document start neither <head> nor <html> exists yet, so the
+            // first attempt fails. Previously that was the end of it: the throw
+            // was swallowed and nothing retried, so the stylesheet could be
+            // missing for the whole page. Observing document catches the
+            // elements as the parser creates them; DOMContentLoaded remains as
+            // the backstop for engines without MutationObserver.
+            if (!inject()) {
+                var mo = null;
+
+                if (typeof MutationObserver !== 'undefined') {
+                    mo = new MutationObserver(function() {
+                        if (inject()) { mo.disconnect(); }
+                    });
+                    mo.observe(document, { childList: true, subtree: true });
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    inject();
+                    if (mo) { mo.disconnect(); }
+                });
             }
         })();
         """
@@ -324,17 +353,40 @@ class CSSInjector: CDVPlugin {
         
         let javascript = """
         (function() {
-            try {
-                if (!\(originGuard)) { return; }
-                if (!document.getElementById('cdn-injected-styles')) {
-                    var style = document.createElement('style');
-                    style.id = 'cdn-injected-styles';
-                    style.textContent = '\(escapedCSS)';
-                    (document.head || document.documentElement).appendChild(style);
-                    console.log('[Native iOS UserScript] CSS injected (fallback method)');
+            if (!\(originGuard)) { return; }
+
+            function inject() {
+                try {
+                    var target = document.head || document.documentElement;
+                    if (!target) { return false; }
+                    if (!document.getElementById('cdn-injected-styles')) {
+                        var style = document.createElement('style');
+                        style.id = 'cdn-injected-styles';
+                        style.textContent = '\(escapedCSS)';
+                        target.appendChild(style);
+                        console.log('[Native iOS UserScript] CSS injected (fallback method)');
+                    }
+                    return true;
+                } catch(e) {
+                    console.error('[Native iOS UserScript] CSS injection failed:', e);
+                    return false;
                 }
-            } catch(e) {
-                console.error('[Native iOS UserScript] CSS injection failed:', e);
+            }
+
+            if (!inject()) {
+                var mo = null;
+
+                if (typeof MutationObserver !== 'undefined') {
+                    mo = new MutationObserver(function() {
+                        if (inject()) { mo.disconnect(); }
+                    });
+                    mo.observe(document, { childList: true, subtree: true });
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    inject();
+                    if (mo) { mo.disconnect(); }
+                });
             }
         })();
         """
