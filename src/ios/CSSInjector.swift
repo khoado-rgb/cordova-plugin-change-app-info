@@ -145,7 +145,51 @@ class CSSInjector: CDVPlugin {
                     window.CORDOVA_BUILD_CONFIG = config;
                     window.AppConfig = config;
                     console.log('[Native iOS UserScript] Config injected at document start');
-                    
+
+                    // Inline on documentElement so it outranks any :root rule
+                    // from a stylesheet OutSystems loads later during SPA
+                    // navigation, and survives screen changes because
+                    // documentElement is never replaced. Values come from the
+                    // parsed JSON, not string concatenation.
+                    //
+                    // Self-contained: at document start documentElement may not
+                    // exist yet, and letting that throw here would also skip the
+                    // cordova-config-ready dispatch below.
+                    function applyBrandColor() {
+                        try {
+                            var root = document.documentElement;
+                            if (!root || !root.style) { return false; }
+                            if (!config.primaryColor || !config.primaryColorVar) { return true; }
+                            root.style.setProperty(config.primaryColorVar, config.primaryColor, 'important');
+                            return true;
+                        } catch (err) {
+                            return false;
+                        }
+                    }
+
+                    // documentElement does not exist yet at document start, so
+                    // the first call fails. Waiting for DOMContentLoaded is far
+                    // too late — the theme stylesheet has painted its own colour
+                    // by then. Observing document catches <html> the moment the
+                    // parser creates it: measured at 89ms versus 458ms on device.
+                    // childList without subtree is enough, documentElement is a
+                    // direct child of document.
+                    if (!applyBrandColor()) {
+                        var brandObserver = null;
+
+                        if (typeof MutationObserver !== 'undefined') {
+                            brandObserver = new MutationObserver(function() {
+                                if (applyBrandColor()) { brandObserver.disconnect(); }
+                            });
+                            brandObserver.observe(document, { childList: true });
+                        }
+
+                        document.addEventListener('DOMContentLoaded', function() {
+                            applyBrandColor();
+                            if (brandObserver) { brandObserver.disconnect(); }
+                        });
+                    }
+
                     // Dispatch event when DOM is ready
                     if (document.readyState === 'loading') {
                         document.addEventListener('DOMContentLoaded', function() {

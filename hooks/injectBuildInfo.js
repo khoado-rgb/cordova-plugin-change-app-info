@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getConfigParser } = require('./utils');
+const themeColor = require('./lib/theme-color');
 
 const SENSITIVE_PREFERENCE_PATTERN = /(secret|token|password|passwd|bearer|credential|private|api[_-]?key|auth)/i;
 
@@ -192,7 +193,42 @@ function createBuildConfigJSON(buildInfo, configPath, root, wwwPath) {
 /**
  * NEW: Create flat config for native plugin injection
  */
-function createNativeConfig(buildInfo, wwwPath) {
+/**
+ * Resolve the brand colour handed to the web layer as config.primaryColor.
+ *
+ * BackgroundColor is preferred over the stylesheet because it is the value the
+ * build already treats as the brand colour (status bar, splash, window
+ * background); parsing the CDN stylesheet covers builds that do not set it.
+ */
+function resolvePrimaryColor(buildInfo, wwwPath, root) {
+  const explicit = themeColor.normalizeColor(buildInfo.primaryColorPref);
+
+  if (explicit) {
+    console.log(`   🎨 Primary color from PRIMARY_COLOR preference: ${explicit}`);
+    return explicit;
+  }
+
+  const background = themeColor.normalizeColor(buildInfo.backgroundColor);
+
+  if (background) {
+    console.log(`   🎨 Primary color from BackgroundColor preference: ${background}`);
+    return background;
+  }
+
+  const fromStylesheet = themeColor.readPrimaryColor(wwwPath, root, buildInfo.primaryColorVar);
+
+  if (fromStylesheet) {
+    console.log(`   🎨 Primary color from CDN stylesheet: ${fromStylesheet}`);
+    return fromStylesheet;
+  }
+
+  console.log('   🎨 No primary color resolved');
+  return null;
+}
+
+function createNativeConfig(buildInfo, wwwPath, root) {
+  const primaryColor = resolvePrimaryColor(buildInfo, wwwPath, root);
+
   const nativeConfig = {
     appName: buildInfo.appName,
     appId: buildInfo.packageName,
@@ -209,6 +245,19 @@ function createNativeConfig(buildInfo, wwwPath) {
     // ✨ Include all custom preferences
     ...buildInfo.customPreferences
   };
+
+  // After the spread so an explicit preference cannot be clobbered by a stale
+  // value, but the stylesheet still wins when no preference is set.
+  if (primaryColor && !nativeConfig.primaryColor) {
+    nativeConfig.primaryColor = primaryColor;
+  }
+
+  // The CSS custom property the web layer reads the brand colour from. Native
+  // sets it inline on documentElement, which outranks any :root rule a
+  // later-loading stylesheet declares.
+  if (nativeConfig.primaryColor) {
+    nativeConfig.primaryColorVar = themeColor.normalizeVariableName(buildInfo.primaryColorVar);
+  }
   
   const nativeConfigPath = path.join(wwwPath, 'cordova-build-config.json');
   return writeJSONWithVerification(nativeConfigPath, nativeConfig, 'cordova-build-config.json (native)');
@@ -314,6 +363,11 @@ function injectBuildInfo(context, platform) {
     apiHostname: getConfigValue('API_HOSTNAME', ['hostname', 'DefaultHostname', 'API_HOSTNAME'], config),
     environment: getConfigValue('ENVIRONMENT', ['ENVIRONMENT'], config, 'production'),
     cdnIcon: getConfigValue('CDN_ICON', ['CDN_ICON'], config),
+    // Colour sources, resolved in createNativeConfig. Read here because
+    // getCustomPreferences only collects prefixed names (TENANT_, CUSTOM_, …).
+    primaryColorPref: getConfigValue('PRIMARY_COLOR', ['PRIMARY_COLOR'], config),
+    backgroundColor: getConfigValue('BackgroundColor', ['BackgroundColor', 'BACKGROUND_COLOR'], config),
+    primaryColorVar: getConfigValue('PRIMARY_COLOR_VAR', ['PRIMARY_COLOR_VAR'], config),
     // ✨ Include all custom preferences
     customPreferences: customPreferences
   };
@@ -362,7 +416,7 @@ function injectBuildInfo(context, platform) {
   updateBuildHistory(buildInfo, historyPath, root, wwwPath);
   
   // NEW: Create flat config for native injection
-  const nativeConfigCreated = createNativeConfig(buildInfo, wwwPath);
+  const nativeConfigCreated = createNativeConfig(buildInfo, wwwPath, root);
   
   if (nativeConfigCreated) {
     console.log('   ✅ Config files created for native injection');

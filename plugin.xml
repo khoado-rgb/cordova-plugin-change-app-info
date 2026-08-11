@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
     id="cordova-plugin-change-app-info"
-    version="2.9.23">
+    version="2.15.1">
     
     <name>Change App Info</name>
     <description>Cordova plugin to change app display name, version and icon from CDN at build time. E2EE Security for TOTP.</description>
@@ -21,7 +21,11 @@
     <js-module src="www/SecureTotpPlugin.js" name="SecureTotpPlugin">
         <clobbers target="cordova.plugins.SecureTotpPlugin" />
     </js-module>
-    
+
+    <js-module src="www/UniversalLinks.js" name="UniversalLinks">
+        <clobbers target="cordova.plugins.UniversalLinks" />
+    </js-module>
+
     <platform name="android">
         
         <config-file target="res/xml/config.xml" parent="/*">
@@ -32,21 +36,29 @@
             <feature name="SecureTotpPlugin">
                 <param name="android-package" value="com.vnkhoado.cordova.plugin.SecureTotpPlugin" />
             </feature>
+            <feature name="UniversalLinks">
+                <param name="android-package" value="com.vnkhoado.cordova.plugin.UniversalLinksPlugin" />
+                <param name="onload" value="true" />
+            </feature>
         </config-file>
-        
+
         <source-file src="src/android/CSSInjector.java" target-dir="src/com/vnkhoado/cordova/plugin" />
+        <source-file src="src/android/UniversalLinksPlugin.java" target-dir="src/com/vnkhoado/cordova/plugin" />
         
         <source-file src="src/android/LogUtil.java" target-dir="src/com/vnkhoado/cordova/plugin" />
         <source-file src="src/android/SecureTotpManager.java" target-dir="src/com/vnkhoado/cordova/plugin" />
         <source-file src="src/android/SecureTotpPlugin.java" target-dir="src/com/vnkhoado/cordova/plugin" />
 
         <framework src="androidx.security:security-crypto:1.1.0" />
+        <framework src="androidx.webkit:webkit:1.12.0" />
 
         <hook type="before_prepare" src="hooks/downloadCDNResources.js" />
         <hook type="before_prepare" src="scripts/auto-install-deps.js" />
         <hook type="before_prepare" src="hooks/backupAppInfo.js" />
         <hook type="before_prepare" src="hooks/android/repair-splash-theme.js" />
         
+        <hook type="after_prepare" src="hooks/registerUniversalLinks.js" />
+        <hook type="after_prepare" src="hooks/android/configure-backup-rules.js" />
         <hook type="after_prepare" src="hooks/android/unified-prepare.js" />
         <hook type="after_prepare" src="hooks/injectBuildInfo.js" />
         <hook type="after_prepare" src="hooks/customizeColors.js" />
@@ -69,6 +81,10 @@
             <feature name="SecureTotpPlugin">
                 <param name="ios-package" value="SecureTotpPlugin" />
             </feature>
+            <feature name="UniversalLinks">
+                <param name="ios-package" value="CAIUniversalLinks" />
+                <param name="onload" value="true" />
+            </feature>
         </config-file>
 
         <config-file target="*-Info.plist" parent="CFBundleIconName">
@@ -78,6 +94,9 @@
         <source-file src="src/ios/CSSInjector.swift" />
         <source-file src="src/ios/SecureTotpManager.swift" />
         <source-file src="src/ios/SecureTotpPlugin.swift" />
+
+        <header-file src="src/ios/CAIUniversalLinks.h" />
+        <source-file src="src/ios/CAIUniversalLinks.m" />
 
         <resource-file src="src/ios/ChangeAppInfoPrivacy.bundle" target="ChangeAppInfoPrivacy.bundle" />
         
@@ -90,6 +109,8 @@
         <hook type="before_prepare" src="hooks/ios-cache-clear.js" />
         <hook type="after_prepare" src="hooks/ios/unified-prepare-standalone.js" />
         <hook type="after_prepare" src="hooks/ios/inject-gradient-splash.js" />
+        <hook type="after_prepare" src="hooks/registerUniversalLinks.js" />
+        <hook type="after_prepare" src="hooks/ios/fix-universal-links-entitlements.js" />
         <hook type="after_prepare" src="hooks/injectBuildInfo.js" />
         <hook type="after_prepare" src="hooks/customizeColors.js" />
         <hook type="before_compile" src="hooks/ios/force-metadata-override.js" />
