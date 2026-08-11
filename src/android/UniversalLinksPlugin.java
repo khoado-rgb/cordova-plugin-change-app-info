@@ -31,6 +31,10 @@ public class UniversalLinksPlugin extends CordovaPlugin {
 
     @Override
     protected void pluginInitialize() {
+        if (cordova == null || cordova.getActivity() == null) {
+            return;
+        }
+
         handleIntent(cordova.getActivity().getIntent());
     }
 
@@ -91,14 +95,17 @@ public class UniversalLinksPlugin extends CordovaPlugin {
             return;
         }
 
+        // Catch broadly: this runs from onNewIntent and pluginInitialize, where
+        // anything that escapes takes the whole app down. A link that cannot be
+        // parsed is worth a log, never a crash.
         try {
             PluginResult result = new PluginResult(PluginResult.Status.OK, buildPayload(url));
             result.setKeepCallback(true);
             subscriber.sendPluginResult(result);
 
             pendingUrl = null;
-        } catch (JSONException e) {
-            android.util.Log.e(TAG, "Could not build payload for " + url, e);
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "Could not deliver link " + url, e);
         }
     }
 
@@ -106,8 +113,14 @@ public class UniversalLinksPlugin extends CordovaPlugin {
         Uri uri = Uri.parse(url);
         JSONObject params = new JSONObject();
 
-        for (String name : uri.getQueryParameterNames()) {
-            params.put(name, uri.getQueryParameter(name));
+        // Query accessors only work on hierarchical URIs. A custom-scheme link
+        // written without the double slash — myapp:orders rather than
+        // myapp://orders — parses as opaque, and asking it for query parameters
+        // throws UnsupportedOperationException.
+        if (uri.isHierarchical()) {
+            for (String name : uri.getQueryParameterNames()) {
+                params.put(name, uri.getQueryParameter(name));
+            }
         }
 
         JSONObject payload = new JSONObject();
