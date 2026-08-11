@@ -5,6 +5,8 @@ import android.net.Uri;
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
 import org.json.JSONArray;
+
+import java.util.Locale;
 import org.json.JSONException;
 
 public class SecureTotpPlugin extends CordovaPlugin {
@@ -20,7 +22,7 @@ public class SecureTotpPlugin extends CordovaPlugin {
     private boolean isSafeOrigin(String currentUrl) {
         if (currentUrl == null || currentUrl.isEmpty()) return false;
         
-        String urlLower = currentUrl.toLowerCase();
+        String urlLower = currentUrl.toLowerCase(Locale.ROOT);
         
         // Local file URLs are always safe
         if (urlLower.startsWith("file:///android_asset/www/")) return true;
@@ -39,8 +41,8 @@ public class SecureTotpPlugin extends CordovaPlugin {
         // Check configured hosts — compare exact host match to prevent
         // subdomain bypass (e.g., "evil-myhost.com" matching "myhost.com")
         if (host != null) {
-            String osDefaultHost = preferences.getString("DefaultHostname", "").toLowerCase();
-            String cordovaHost = preferences.getString("hostname", "").toLowerCase();
+            String osDefaultHost = preferences.getString("DefaultHostname", "").toLowerCase(Locale.ROOT);
+            String cordovaHost = preferences.getString("hostname", "").toLowerCase(Locale.ROOT);
             
             if (!osDefaultHost.isEmpty() && host.equals(osDefaultHost)) return true;
             if (!cordovaHost.isEmpty() && host.equals(cordovaHost)) return true;

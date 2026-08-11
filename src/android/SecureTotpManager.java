@@ -10,6 +10,7 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKey;
 
 import java.nio.ByteBuffer;
+import java.util.Locale;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
 import java.security.PublicKey;
@@ -234,7 +235,7 @@ public class SecureTotpManager {
         int otp = binary % 1000000;
         
         // Format as a 6-character string.
-        return String.format("%06d", otp);
+        return String.format(Locale.US, "%06d", otp);
     }
 
     // =========================================================================
@@ -242,7 +243,7 @@ public class SecureTotpManager {
     // =========================================================================
     private static byte[] base32Decode(String base32) {
         String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-        String cleanInput = base32.toUpperCase().replaceAll("[^A-Z2-7]", "");
+        String cleanInput = base32.toUpperCase(Locale.ROOT).replaceAll("[^A-Z2-7]", "");
         int length = cleanInput.length();
         int outLength = length * 5 / 8;
         byte[] result = new byte[outLength];

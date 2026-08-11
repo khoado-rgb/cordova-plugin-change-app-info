@@ -118,7 +118,7 @@ public class CSSInjector extends CordovaPlugin {
     private boolean isSafeOrigin(String currentUrl) {
         if (currentUrl == null || currentUrl.isEmpty()) return false;
 
-        String urlLower = currentUrl.toLowerCase();
+        String urlLower = currentUrl.toLowerCase(Locale.ROOT);
         if (urlLower.startsWith("file:///android_asset/www/")) return true;
 
         Uri uri = Uri.parse(urlLower);
@@ -129,8 +129,8 @@ public class CSSInjector extends CordovaPlugin {
         if ("https".equals(scheme) && "localhost".equals(host)) return true;
 
         if (host != null) {
-            String osDefaultHost = preferences.getString("DefaultHostname", "").toLowerCase();
-            String cordovaHost = preferences.getString("hostname", "").toLowerCase();
+            String osDefaultHost = preferences.getString("DefaultHostname", "").toLowerCase(Locale.ROOT);
+            String cordovaHost = preferences.getString("hostname", "").toLowerCase(Locale.ROOT);
 
             if (!osDefaultHost.isEmpty() && host.equals(osDefaultHost)) return true;
             if (!cordovaHost.isEmpty() && host.equals(cordovaHost)) return true;
