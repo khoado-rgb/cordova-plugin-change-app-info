@@ -51,20 +51,63 @@ public class SecureTotpManager {
             return cachedPrefs;
         }
 
+        try {
+            cachedPrefs = openEncryptedPrefs(context, prefsName);
+        } catch (Exception unreadable) {
+            // The secret is held in shared_prefs, an ordinary file that a
+            // phone-to-phone transfer copies. The key that decrypts it lives in
+            // the AndroidKeyStore, which is device-bound and cannot be copied.
+            // Move to a new handset with the app data and the two arrive
+            // mismatched, so every read fails identically and the user can
+            // never generate a code again — reinstalling is the only way out.
+            // Discard the unusable pair instead: the caller then reads a null
+            // secret and reports "register device first", which is recoverable.
+            // iOS is unaffected; its secret is a keychain item marked
+            // ThisDeviceOnly, so it simply does not travel.
+            LogUtil.d(context, TAG, "Encrypted preferences unreadable, resetting: " + unreadable);
+            clearEncryptedState(context, prefsName);
+            cachedPrefs = openEncryptedPrefs(context, prefsName);
+        }
+
+        cachedPrefsName = prefsName;
+        return cachedPrefs;
+    }
+
+    private static SharedPreferences openEncryptedPrefs(Context context, String prefsName) throws Exception {
         MasterKey masterKey = new MasterKey.Builder(context)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build();
 
-        cachedPrefs = EncryptedSharedPreferences.create(
+        SharedPreferences prefs = EncryptedSharedPreferences.create(
                 context,
                 prefsName,
                 masterKey,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         );
-        cachedPrefsName = prefsName;
         cachedMasterKey = masterKey;
-        return cachedPrefs;
+        return prefs;
+    }
+
+    /** Drop the stale preferences file and master key so a fresh pair can be created. */
+    private static void clearEncryptedState(Context context, String prefsName) {
+        cachedPrefs = null;
+        cachedPrefsName = null;
+        cachedMasterKey = null;
+
+        try {
+            context.deleteSharedPreferences(prefsName);
+        } catch (Throwable error) {
+            android.util.Log.w(TAG, "Could not delete " + prefsName, error);
+        }
+
+        try {
+            KeyStore keyStore = KeyStore.getInstance(ANDROID_KEY_STORE);
+            keyStore.load(null);
+            keyStore.deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS);
+        } catch (Throwable error) {
+            android.util.Log.w(TAG, "Could not delete the master key", error);
+        }
     }
 
     // =========================================================================
@@ -198,7 +241,16 @@ public class SecureTotpManager {
         // 1. Read the secret key from encrypted storage.
         SharedPreferences sharedPreferences = getEncryptedPrefs(context);
 
-        String secret = sharedPreferences.getString(getSecretKeyAccount(context), null);
+        String secret;
+        try {
+            secret = sharedPreferences.getString(getSecretKeyAccount(context), null);
+        } catch (Throwable unreadable) {
+            // The keyset opened but this value did not decrypt — same transfer
+            // problem one level down, and just as permanent if left alone.
+            LogUtil.d(context, TAG, "Stored secret unreadable, resetting: " + unreadable);
+            clearEncryptedState(context, getPrefsName(context));
+            secret = null;
+        }
 
         if (secret == null || secret.isEmpty()) {
             throw new Exception("Secret Key not found. Please register device first.");
