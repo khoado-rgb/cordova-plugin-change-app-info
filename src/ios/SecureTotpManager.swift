@@ -155,6 +155,26 @@ class SecureTotpManager {
         return SecItemAdd(queryAdd as CFDictionary, nil) == errSecSuccess
     }
     
+    /**
+     * Whether a secret is enrolled on this device.
+     *
+     * generateTotp returns nil for every kind of failure, so the caller cannot
+     * tell "never enrolled here" from "enrolled but unusable". They need
+     * different answers: the first is what a user sees after moving to a new
+     * handset — the keychain item is marked ThisDeviceOnly and does not
+     * travel — and it is fixed by enrolling again, not by checking the secret.
+     */
+    static func hasStoredSecret() -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceNameAes,
+            kSecAttrAccount as String: accountNameAes,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
     // =========================================================================
     // 5. Generate a 6-digit TOTP code with CryptoKit HMAC-SHA256.
     // =========================================================================
