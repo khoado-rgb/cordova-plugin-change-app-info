@@ -202,7 +202,14 @@ class SecureTotpManager {
         guard let keyData = base32Decode(secretString) else { return nil }
         
         // 2. Calculate the time step.
+        //
+        // UInt64(negative) traps, and a device clock set before 1970 — which a
+        // user can do from Settings — makes the epoch negative. That would take
+        // the whole process down instead of failing the call. Android runs the
+        // same arithmetic on a long and never crashes, so refusing here keeps
+        // the two platforms answering alike.
         let epoch = Int(Date().timeIntervalSince1970) + timeOffset
+        guard epoch > 0 else { return nil }
         var timeStep = UInt64(epoch / expired).bigEndian
         let timeData = Data(bytes: &timeStep, count: MemoryLayout<UInt64>.size)
         
