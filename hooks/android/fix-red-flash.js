@@ -750,11 +750,14 @@ function fixRedFlash(context) {
  * by using a transparent icon, a fixed background, and a post-splash theme.
  */
 function writeSplashThemeOverride(root, backgroundColor, statusBarColor) {
-  // The runtime setStatusBarColor call in MainActivity is the only thing that
-  // has ever coloured the status bar, and Android is retiring it: no-op for
-  // targetSdk 35+, and from 36 there is no system-drawn status bar background
-  // to colour at all. Declaring it in the theme covers every build that still
-  // targets 35 or below without depending on that call.
+  // The runtime setStatusBarColor call in MainActivity has been the only thing
+  // colouring the status bar, and it lives exactly as long as the theme's
+  // edge-to-edge opt-out does. Measured on Android 16 it still works below
+  // targetSdk 36; on an API 37 preview the opt-out no longer takes effect and
+  // the call paints nothing, while this theme item still does. Declaring the
+  // colour here is what keeps working once that call stops. targetSdk 36 is a
+  // separate matter — there is no system-drawn status bar background to colour
+  // at all, which is what the stripe in buildPostSuperBlock handles.
   const lightStatusBar = needsDarkStatusBarIcons(statusBarColor);
   const valuesDir = path.join(root, 'platforms/android/app/src/main/res/values');
   if (!fs.existsSync(valuesDir)) {
