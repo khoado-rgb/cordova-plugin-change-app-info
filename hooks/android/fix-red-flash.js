@@ -302,6 +302,89 @@ function findMainActivity(baseDir) {
 /**
  * Inject background color into MainActivity
  */
+/**
+ * The post-super block injected into MainActivity.onCreate.
+ *
+ * The first half is the long-standing anti-flash work: repaint the window,
+ * decor and WebView so an SPA navigation never exposes the system colour.
+ *
+ * The second half exists because that work is about to stop being enough.
+ * setStatusBarColor and setDecorFitsSystemWindows are what produce the opaque
+ * stripe behind the status bar, and both are honoured today only because the
+ * theme opts out of Android 15 edge-to-edge enforcement. From targetSdk 36 the
+ * platform ignores that opt-out and turns both calls into no-ops, so the
+ * stripe silently disappears and the web content draws under the clock. The
+ * fallback draws the stripe as a real view sized from the live window inset,
+ * which needs no opt-out and no platform cooperation.
+ *
+ * It is gated on targetSdk 36 so that nothing changes for builds that still
+ * target 35 — those keep the legacy path exactly as it was.
+ */
+function buildPostSuperBlock(backgroundColor, statusBarColor) {
+  return `
+        // FIX_RED_FLASH v5 (post-super): re-assert bg on decor + WebView for SPA navigation,
+        //                              opt out of Android 15 edge-to-edge, and draw the status
+        //                              bar stripe by hand once targetSdk 36 ignores that opt-out.
+        try {
+            int bgColor = Color.parseColor("${backgroundColor}");
+            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));
+            getWindow().getDecorView().setBackgroundColor(bgColor);
+            if (appView != null && appView.getView() != null) {
+                appView.getView().setBackgroundColor(bgColor);
+            }
+            try {
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
+                getWindow().setStatusBarColor(Color.parseColor("${statusBarColor}"));
+            } catch (Throwable __frfE2e) {
+                android.util.Log.e("FixRedFlash", "edge-to-edge: " + __frfE2e.getMessage());
+            }
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 35
+                        && getApplicationInfo().targetSdkVersion >= 36
+                        && appView != null && appView.getView() != null) {
+                    final android.view.View __frfWeb = appView.getView();
+                    android.view.ViewGroup __frfRoot =
+                            (android.view.ViewGroup) findViewById(android.R.id.content);
+                    if (__frfRoot != null) {
+                        // Added after super.onCreate installed the WebView, so the
+                        // stripe is the last child and paints over the WebView's
+                        // own background colour.
+                        final android.view.View __frfStripe = new android.view.View(this);
+                        __frfStripe.setBackgroundColor(Color.parseColor("${statusBarColor}"));
+                        __frfRoot.addView(__frfStripe, new android.widget.FrameLayout.LayoutParams(
+                                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, 0,
+                                android.view.Gravity.TOP));
+                        // Framework listener rather than ViewCompat: the compat
+                        // wrapper keys its listener on androidx.core.R.id, which
+                        // drags in that library's resources. Everything below is
+                        // API 30 or older and this branch already requires 35.
+                        __frfWeb.setOnApplyWindowInsetsListener(
+                                new android.view.View.OnApplyWindowInsetsListener() {
+                                    @Override
+                                    public android.view.WindowInsets onApplyWindowInsets(
+                                            android.view.View __frfView,
+                                            android.view.WindowInsets __frfInsets) {
+                                        android.graphics.Insets __frfBars = __frfInsets.getInsets(
+                                                android.view.WindowInsets.Type.systemBars());
+                                        __frfView.setPadding(0, __frfBars.top, 0, __frfBars.bottom);
+                                        android.view.ViewGroup.LayoutParams __frfLp =
+                                                __frfStripe.getLayoutParams();
+                                        __frfLp.height = __frfBars.top;
+                                        __frfStripe.setLayoutParams(__frfLp);
+                                        return __frfInsets;
+                                    }
+                                });
+                        __frfWeb.requestApplyInsets();
+                    }
+                }
+            } catch (Throwable __frfStripeErr) {
+                android.util.Log.e("FixRedFlash", "status bar stripe: " + __frfStripeErr.getMessage());
+            }
+        } catch (Exception e) {
+            android.util.Log.e("FixRedFlash", "post-super: " + e.getMessage());
+        }`;
+}
+
 function injectMainActivityBackground(mainActivityPath, backgroundColor, statusBarColor) {
   if (!fs.existsSync(mainActivityPath)) {
     console.log('   ⚠️  MainActivity.java not found');
@@ -317,7 +400,9 @@ function injectMainActivityBackground(mainActivityPath, backgroundColor, statusB
   // patched files get re-injected with the latest code.
   // v4: opt out of Android 15+ edge-to-edge enforcement (targetSdk 35+ ignores
   //     cordova-plugin-statusbar's StatusBarOverlaysWebView=false otherwise).
-  const PATCH_VERSION = 'v4';
+  // v5: draw the status bar stripe from window insets, because targetSdk 36
+  //     ignores that opt-out and no-ops setStatusBarColor.
+  const PATCH_VERSION = 'v5';
   const versionMarker = `// FIX_RED_FLASH ${PATCH_VERSION}`;
   if (content.includes(versionMarker)) {
     console.log('   ✓ MainActivity already patched (current version)');
@@ -381,7 +466,7 @@ function injectMainActivityBackground(mainActivityPath, backgroundColor, statusB
     console.log('   🎯 Found onCreate, injecting post-super background...');
     content = content.replace(
       postSuperRegex,
-      `$1\n\n        // FIX_RED_FLASH v4 (post-super): re-assert bg on decor + WebView for SPA navigation,\n        //                              and opt out of Android 15+ edge-to-edge so the status bar\n        //                              gets its own opaque stripe (StatusBarOverlaysWebView=false).\n        try {\n            int bgColor = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));\n            getWindow().getDecorView().setBackgroundColor(bgColor);\n            if (appView != null && appView.getView() != null) {\n                appView.getView().setBackgroundColor(bgColor);\n            }\n            try {\n                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), true);\n                getWindow().setStatusBarColor(Color.parseColor("${effectiveStatusBarColor}"));\n            } catch (Throwable __frfE2e) {\n                android.util.Log.e("FixRedFlash", "edge-to-edge: " + __frfE2e.getMessage());\n            }\n        } catch (Exception e) {\n            android.util.Log.e("FixRedFlash", "post-super: " + e.getMessage());\n        }`
+      `$1\n${buildPostSuperBlock(backgroundColor, effectiveStatusBarColor)}`
     );
     
     fs.writeFileSync(mainActivityPath, content, 'utf8');
