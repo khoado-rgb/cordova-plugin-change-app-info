@@ -2,7 +2,7 @@
 
 > Cordova plugin to change app display name, version, and icon from CDN at build time. Includes E2EE TOTP security, native config injection, gradient splash screens, and CSS/JS asset replacement.
 
-**Version:** 2.15.1  
+**Version:** 2.17.1  
 **License:** MIT  
 **Author:** vnkhoado
 
@@ -25,7 +25,7 @@
 - Cordova ≥ 9.0.0
 - Node.js ≥ 14.0.0
 - **Image processing** (optional, for icon generation):
-  - `sharp` ^0.33.0 (recommended) or `jimp` ^1.6.0 (fallback)
+  - `sharp` ^0.35.5 (recommended, needs Node.js ≥ 20.9) or `jimp` ^1.6.0 (fallback, used automatically when sharp cannot load)
   - Auto-installed by `scripts/auto-install-deps.js` during build
 
 ## Installation
@@ -37,7 +37,7 @@ cordova plugin add https://github.com/vnkhoado/cordova-plugin-change-app-info.gi
 Pin a specific version:
 
 ```bash
-cordova plugin add https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.15.1
+cordova plugin add https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.17.1
 ```
 
 ## Configuration
@@ -68,7 +68,7 @@ Add preferences to `config.xml`:
 ```json
 {
   "plugin": {
-    "url": "https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.15.1"
+    "url": "https://github.com/vnkhoado/cordova-plugin-change-app-info.git#v2.17.1"
   },
   "preferences": {
     "global": [

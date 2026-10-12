@@ -1,6 +1,6 @@
 {
   "name": "cordova-plugin-change-app-info",
-  "version": "2.15.1",
+  "version": "2.17.8",
   "description": "Cordova plugin to change app info with iOS optimization, gradient splash screens, and JSON config storage",
   "main": "index.js",
   "scripts": {
@@ -39,7 +39,7 @@
     "plist": "^3.1.0"
   },
   "peerDependencies": {
-    "sharp": "^0.32.0 || ^0.33.0",
+    "sharp": "^0.35.5",
     "jimp": "^1.6.0"
   },
   "peerDependenciesMeta": {
@@ -52,7 +52,7 @@
   },
   "optionalDependencies": {
     "jimp": "^1.6.1",
-    "sharp": "^0.33.0"
+    "sharp": "^0.35.5"
   },
   "engines": {
     "node": ">=14.0.0",

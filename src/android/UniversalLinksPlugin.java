@@ -68,24 +68,34 @@ public class UniversalLinksPlugin extends CordovaPlugin {
             return;
         }
 
-        if (intent.getBooleanExtra(HANDLED_EXTRA, false)) {
-            return;
-        }
+        // Touching an extra forces the whole Bundle to unparcel, and that throws
+        // when the sender packed a Parcelable whose class this app does not
+        // have. The launcher activity carries BROWSABLE, so any app on the
+        // device can hand us an intent shaped that way — and this runs from
+        // pluginInitialize, where a crash is a crash on launch. A link we
+        // cannot read is worth dropping, never taking the app down for.
+        try {
+            if (intent.getBooleanExtra(HANDLED_EXTRA, false)) {
+                return;
+            }
 
-        Uri data = intent.getData();
-        if (data == null) {
-            return;
-        }
+            Uri data = intent.getData();
+            if (data == null) {
+                return;
+            }
 
-        intent.putExtra(HANDLED_EXTRA, true);
+            intent.putExtra(HANDLED_EXTRA, true);
 
-        String url = data.toString();
-        android.util.Log.d(TAG, "Received " + url);
+            String url = data.toString();
+            android.util.Log.d(TAG, "Received " + url);
 
-        if (subscriber != null) {
-            deliver(url);
-        } else {
-            pendingUrl = url;
+            if (subscriber != null) {
+                deliver(url);
+            } else {
+                pendingUrl = url;
+            }
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "Could not read the launching intent", e);
         }
     }
 

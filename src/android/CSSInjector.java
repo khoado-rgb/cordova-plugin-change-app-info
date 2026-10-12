@@ -1084,12 +1084,9 @@ public class CSSInjector extends CordovaPlugin {
             return "(function() {" +
                    "  function inject() {" +
                    "    try {" +
-                   "      if (typeof document === 'undefined') return;" +
+                   "      if (typeof document === 'undefined') return false;" +
                    "      var target = document.head || document.getElementsByTagName('head')[0] || document.documentElement;" +
-                   "      if (!target) {" +
-                   "        setTimeout(inject, 100);" +
-                   "        return;" +
-                   "      }" +
+                   "      if (!target) return false;" +
                    "      if (!document.getElementById('cdn-styles')) {" +
                    "        var b64 = '" + base64CSS + "';" +
                    "        var css = decodeURIComponent(escape(atob(b64)));" +
@@ -1099,12 +1096,27 @@ public class CSSInjector extends CordovaPlugin {
                    "        target.appendChild(s);" +
                    "        console.log('[Native-CSS] Loaded (" + cssContent.length() + " bytes)');" +
                    "      }" +
-                   "    } catch(e) { console.error('[Native-CSS] Failed:', e); }" +
+                   "      return true;" +
+                   "    } catch(e) { console.error('[Native-CSS] Failed:', e); return false; }" +
                    "  }" +
-                   "  if (document.readyState === 'loading') {" +
-                   "    document.addEventListener('DOMContentLoaded', inject);" +
-                   "  } else {" +
-                   "    inject();" +
+                   // At document start there is no <html> yet, so the first
+                   // attempt fails. DOMContentLoaded is far too late: the app's
+                   // own stylesheets have painted by then, which is the colour
+                   // flash on the login screen. Observing document catches
+                   // <html> as the parser creates it — the brand-colour write
+                   // uses the same hook and lands at 150ms instead of 460ms.
+                   // subtree is needed here because <head> is a grandchild of
+                   // document; the observer disconnects as soon as it hits.
+                   "  if (!inject()) {" +
+                   "    var mo = null;" +
+                   "    if (typeof MutationObserver !== 'undefined') {" +
+                   "      mo = new MutationObserver(function() { if (inject()) { mo.disconnect(); } });" +
+                   "      mo.observe(document, { childList: true, subtree: true });" +
+                   "    }" +
+                   "    document.addEventListener('DOMContentLoaded', function() {" +
+                   "      inject();" +
+                   "      if (mo) { mo.disconnect(); }" +
+                   "    });" +
                    "  }" +
                    "})();";
         } catch (Exception e) {
@@ -1124,12 +1136,9 @@ public class CSSInjector extends CordovaPlugin {
         return "(function() {" +
                "  function inject() {" +
                "    try {" +
-               "      if (typeof document === 'undefined') return;" +
+               "      if (typeof document === 'undefined') return false;" +
                "      var target = document.head || document.getElementsByTagName('head')[0] || document.documentElement;" +
-               "      if (!target) {" +
-               "        setTimeout(inject, 100);" +
-               "        return;" +
-               "      }" +
+               "      if (!target) return false;" +
                "      if (!document.getElementById('cdn-styles')) {" +
                "        var s = document.createElement('style');" +
                "        s.id = 'cdn-styles';" +
@@ -1137,12 +1146,19 @@ public class CSSInjector extends CordovaPlugin {
                "        target.appendChild(s);" +
                "        console.log('[Native-CSS] Loaded');" +
                "      }" +
-               "    } catch(e) { console.error('[Native-CSS] Failed:', e); }" +
+               "      return true;" +
+               "    } catch(e) { console.error('[Native-CSS] Failed:', e); return false; }" +
                "  }" +
-               "  if (document.readyState === 'loading') {" +
-               "    document.addEventListener('DOMContentLoaded', inject);" +
-               "  } else {" +
-               "    inject();" +
+               "  if (!inject()) {" +
+               "    var mo = null;" +
+               "    if (typeof MutationObserver !== 'undefined') {" +
+               "      mo = new MutationObserver(function() { if (inject()) { mo.disconnect(); } });" +
+               "      mo.observe(document, { childList: true, subtree: true });" +
+               "    }" +
+               "    document.addEventListener('DOMContentLoaded', function() {" +
+               "      inject();" +
+               "      if (mo) { mo.disconnect(); }" +
+               "    });" +
                "  }" +
                "})();";
     }

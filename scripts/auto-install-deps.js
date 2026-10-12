@@ -81,7 +81,7 @@ function main() {
   const dependencies = [
     {
       name: 'sharp',
-      version: '^0.33.0',
+      version: '^0.35.5',
       type: 'OPTIONAL',
       description: 'Fast icon generation (recommended)',
       required: false

@@ -145,6 +145,14 @@ class SecureTotpPlugin: CDVPlugin {
             if let code = SecureTotpManager.generateTotp(expired: expired, timeOffset: offset) {
                 let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: code)
                 self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
+            } else if !SecureTotpManager.hasStoredSecret() {
+                // Word for word what Android reports, so one branch in the web
+                // layer covers both platforms. Reached whenever this device was
+                // never enrolled — most often right after the user moved to a
+                // new handset — and the app has to enrol again rather than
+                // treat the secret as suspect.
+                let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Secret Key not found. Please register device first.")
+                self.commandDelegate.send(pluginResult, callbackId: command.callbackId)
             } else {
                 let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "Không thể sinh mã TOTP. Vui lòng kiểm tra lại Secret Key.")
                 self.commandDelegate.send(pluginResult, callbackId: command.callbackId)

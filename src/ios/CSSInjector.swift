@@ -79,26 +79,26 @@ class CSSInjector: CDVPlugin {
      * Eliminates timing issues on fresh app install
      */
     private func installUserScripts() {
-        DispatchQueue.main.async {
+        let install = {
             guard let wkWebView = self.webView as? WKWebView else {
                 print("[CSSInjector] WebView not available")
                 return
             }
-            
+
             let contentController = wkWebView.configuration.userContentController
-            
+
             // 1. Install Config UserScript (highest priority)
             if let configScript = self.buildConfigUserScript() {
                 contentController.addUserScript(configScript)
                 print("[CSSInjector] ✅ Config UserScript installed")
             }
-            
+
             // 2. Install Background Color UserScript
             if let bgColor = self.getBackgroundColor(), let bgScript = self.buildBackgroundUserScript(color: bgColor) {
                 contentController.addUserScript(bgScript)
                 print("[CSSInjector] ✅ Background UserScript installed: \(bgColor)")
             }
-            
+
             // 3. Install CSS UserScript
             if let cssScript = self.buildCSSUserScript() {
                 contentController.addUserScript(cssScript)
@@ -106,8 +106,23 @@ class CSSInjector: CDVPlugin {
                     print("[CSSInjector] ✅ CSS UserScript installed (\(cssSize) bytes)")
                 }
             }
-            
+
             print("[CSSInjector] All UserScripts installed successfully")
+        }
+
+        // Register synchronously. CDVViewController.viewDidLoad instantiates
+        // the startup plugins and then calls loadRequest: on the very next
+        // statement, in the same run-loop turn. addUserScript only affects
+        // later navigations, so dispatching this asynchronously registered the
+        // scripts after that first load had already begun — leaving the splash
+        // and login screens with no config, no background and no stylesheet,
+        // and an SPA never creates the second document that would pick them up.
+        // pluginInitialize already runs on the main thread here; the sync
+        // branch is only for callers that are not.
+        if Thread.isMainThread {
+            install()
+        } else {
+            DispatchQueue.main.sync(execute: install)
         }
     }
     
@@ -284,19 +299,48 @@ class CSSInjector: CDVPlugin {
         
         let javascript = """
         (function() {
-            try {
-                if (!\(originGuard)) { return; }
-                if (!document.getElementById('cdn-injected-styles')) {
-                    var base64CSS = '\(base64CSS)';
-                    var decodedCSS = decodeURIComponent(escape(atob(base64CSS)));
-                    var style = document.createElement('style');
-                    style.id = 'cdn-injected-styles';
-                    style.textContent = decodedCSS;
-                    (document.head || document.documentElement).appendChild(style);
-                    console.log('[Native iOS UserScript] CDN CSS injected (\(css.count) bytes)');
+            if (!\(originGuard)) { return; }
+
+            function inject() {
+                try {
+                    var target = document.head || document.documentElement;
+                    if (!target) { return false; }
+                    if (!document.getElementById('cdn-injected-styles')) {
+                        var base64CSS = '\(base64CSS)';
+                        var decodedCSS = decodeURIComponent(escape(atob(base64CSS)));
+                        var style = document.createElement('style');
+                        style.id = 'cdn-injected-styles';
+                        style.textContent = decodedCSS;
+                        target.appendChild(style);
+                        console.log('[Native iOS UserScript] CDN CSS injected (\(css.count) bytes)');
+                    }
+                    return true;
+                } catch(e) {
+                    console.error('[Native iOS UserScript] CSS injection failed:', e);
+                    return false;
                 }
-            } catch(e) {
-                console.error('[Native iOS UserScript] CSS injection failed:', e);
+            }
+
+            // At document start neither <head> nor <html> exists yet, so the
+            // first attempt fails. Previously that was the end of it: the throw
+            // was swallowed and nothing retried, so the stylesheet could be
+            // missing for the whole page. Observing document catches the
+            // elements as the parser creates them; DOMContentLoaded remains as
+            // the backstop for engines without MutationObserver.
+            if (!inject()) {
+                var mo = null;
+
+                if (typeof MutationObserver !== 'undefined') {
+                    mo = new MutationObserver(function() {
+                        if (inject()) { mo.disconnect(); }
+                    });
+                    mo.observe(document, { childList: true, subtree: true });
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    inject();
+                    if (mo) { mo.disconnect(); }
+                });
             }
         })();
         """
@@ -324,17 +368,40 @@ class CSSInjector: CDVPlugin {
         
         let javascript = """
         (function() {
-            try {
-                if (!\(originGuard)) { return; }
-                if (!document.getElementById('cdn-injected-styles')) {
-                    var style = document.createElement('style');
-                    style.id = 'cdn-injected-styles';
-                    style.textContent = '\(escapedCSS)';
-                    (document.head || document.documentElement).appendChild(style);
-                    console.log('[Native iOS UserScript] CSS injected (fallback method)');
+            if (!\(originGuard)) { return; }
+
+            function inject() {
+                try {
+                    var target = document.head || document.documentElement;
+                    if (!target) { return false; }
+                    if (!document.getElementById('cdn-injected-styles')) {
+                        var style = document.createElement('style');
+                        style.id = 'cdn-injected-styles';
+                        style.textContent = '\(escapedCSS)';
+                        target.appendChild(style);
+                        console.log('[Native iOS UserScript] CSS injected (fallback method)');
+                    }
+                    return true;
+                } catch(e) {
+                    console.error('[Native iOS UserScript] CSS injection failed:', e);
+                    return false;
                 }
-            } catch(e) {
-                console.error('[Native iOS UserScript] CSS injection failed:', e);
+            }
+
+            if (!inject()) {
+                var mo = null;
+
+                if (typeof MutationObserver !== 'undefined') {
+                    mo = new MutationObserver(function() {
+                        if (inject()) { mo.disconnect(); }
+                    });
+                    mo.observe(document, { childList: true, subtree: true });
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    inject();
+                    if (mo) { mo.disconnect(); }
+                });
             }
         })();
         """
@@ -480,12 +547,12 @@ class CSSInjector: CDVPlugin {
      * Set WebView background color to prevent white flash
      */
     private func setWebViewBackgroundColor(colorString: String) {
-        DispatchQueue.main.async {
+        let apply = {
             guard let webView = self.webView as? WKWebView else {
                 print("[CSSInjector] WebView not available for background color")
                 return
             }
-            
+
             // Parse hex color
             if let color = self.hexStringToUIColor(hex: colorString) {
                 webView.backgroundColor = color
@@ -495,6 +562,15 @@ class CSSInjector: CDVPlugin {
             } else {
                 print("[CSSInjector] Invalid color format; preserving default app colors: \(colorString)")
             }
+        }
+
+        // Same reason as installUserScripts: this runs from pluginInitialize,
+        // one statement before viewDidLoad starts the first load. Deferring it
+        // leaves the webview on its default background for that first frame.
+        if Thread.isMainThread {
+            apply()
+        } else {
+            DispatchQueue.main.sync(execute: apply)
         }
     }
     

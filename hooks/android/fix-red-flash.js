@@ -266,6 +266,35 @@ function getConfiguredStatusBarColor(config) {
 }
 
 /**
+ * Whether the status bar icons have to be drawn dark over this colour.
+ *
+ * Painting the status bar is only half the job: the clock, battery and signal
+ * icons are drawn by the system in white unless the theme says otherwise, so a
+ * light brand colour would swallow them. WCAG relative luminance decides which
+ * of white or black contrasts better against the background, and 0.179 is the
+ * luminance where the two contrast ratios cross.
+ */
+function needsDarkStatusBarIcons(statusBarColor) {
+  const hex = String(statusBarColor || '').replace(/^#/, '');
+  // normalizeHexColor hands back #RRGGBB, or #AARRGGBB when alpha is not opaque.
+  const rgb = hex.length === 8 ? hex.substring(2) : hex;
+  if (!/^[0-9a-fA-F]{6}$/.test(rgb)) return false;
+
+  const linear = pair => {
+    const channel = parseInt(pair, 16) / 255;
+    return channel <= 0.03928
+      ? channel / 12.92
+      : Math.pow((channel + 0.055) / 1.055, 2.4);
+  };
+
+  const luminance = 0.2126 * linear(rgb.substring(0, 2)) +
+                    0.7152 * linear(rgb.substring(2, 4)) +
+                    0.0722 * linear(rgb.substring(4, 6));
+
+  return luminance > 0.179;
+}
+
+/**
  * Find MainActivity.java in the project
  */
 function findMainActivity(baseDir) {
@@ -302,6 +331,149 @@ function findMainActivity(baseDir) {
 /**
  * Inject background color into MainActivity
  */
+/**
+ * The post-super block injected into MainActivity.onCreate.
+ *
+ * The first half is the long-standing anti-flash work: repaint the window,
+ * decor and WebView so an SPA navigation never exposes the system colour.
+ *
+ * The second half exists because that work is about to stop being enough.
+ * setStatusBarColor and setDecorFitsSystemWindows are what produce the opaque
+ * stripe behind the status bar, and both are honoured today only because the
+ * theme opts out of Android 15 edge-to-edge enforcement. From targetSdk 36 the
+ * platform ignores that opt-out and turns both calls into no-ops, so the
+ * stripe silently disappears and the web content draws under the clock. The
+ * fallback draws the stripe as a real view sized from the live window inset,
+ * which needs no opt-out and no platform cooperation.
+ *
+ * It is gated on targetSdk 36 so that nothing changes for builds that still
+ * target 35 — those keep the legacy path exactly as it was.
+ *
+ * The same opt-out is what made adjustResize shrink the window for the
+ * keyboard, so at targetSdk 36 the fallback has to stand in for that too:
+ * otherwise the keyboard covers the input it was opened for. The insets are
+ * handled on the container rather than the WebView, because a listener on the
+ * WebView replaces the WebView's own inset handling, and the types handled are
+ * zeroed before they reach it so nothing is applied twice. cordova-android 15
+ * wraps the WebView in a layout that already does all of this, so the
+ * fallback stands aside whenever the WebView is not a direct child of content.
+ */
+function buildPostSuperBlock(backgroundColor, statusBarColor) {
+  return `
+        // FIX_RED_FLASH v6 (post-super): re-assert bg on decor + WebView for SPA navigation,
+        //                              opt out of Android 15 edge-to-edge, and once targetSdk 36
+        //                              ignores that opt-out, draw the status bar stripe and inset
+        //                              the WebView for the bars and the keyboard by hand.
+        try {
+            int bgColor = Color.parseColor("${backgroundColor}");
+            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));
+            getWindow().getDecorView().setBackgroundColor(bgColor);
+            if (appView != null && appView.getView() != null) {
+                appView.getView().setBackgroundColor(bgColor);
+            }
+            try {
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
+                getWindow().setStatusBarColor(Color.parseColor("${statusBarColor}"));
+            } catch (Throwable __frfE2e) {
+                android.util.Log.e("FixRedFlash", "edge-to-edge: " + __frfE2e.getMessage());
+            }
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 35
+                        && getApplicationInfo().targetSdkVersion >= 36
+                        && appView != null && appView.getView() != null) {
+                    final android.view.View __frfWeb = appView.getView();
+                    final android.view.ViewGroup __frfRoot =
+                            (android.view.ViewGroup) findViewById(android.R.id.content);
+                    if (__frfRoot != null && __frfWeb.getParent() != __frfRoot) {
+                        // cordova-android 15+ wraps the WebView and insets it for the
+                        // bars and the keyboard itself; a second handler doubles both.
+                        android.util.Log.d("FixRedFlash", "insets: WebView is wrapped, leaving them to its container");
+                    } else if (__frfRoot != null) {
+                        // Added after super.onCreate installed the WebView, so the
+                        // stripe is the last child and paints over the WebView's
+                        // own background colour.
+                        final android.view.View __frfStripe = new android.view.View(this);
+                        __frfStripe.setBackgroundColor(Color.parseColor("${statusBarColor}"));
+                        __frfRoot.addView(__frfStripe, new android.widget.FrameLayout.LayoutParams(
+                                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, 0,
+                                android.view.Gravity.TOP));
+                        // Framework listener rather than ViewCompat: the compat
+                        // wrapper keys its listener on androidx.core.R.id, which
+                        // drags in that library's resources. Everything below is
+                        // API 30 or older and this branch already requires 35.
+                        //
+                        // On the container, not the WebView: a listener on the
+                        // WebView replaces its own inset handling.
+                        __frfRoot.setOnApplyWindowInsetsListener(
+                                new android.view.View.OnApplyWindowInsetsListener() {
+                                    @Override
+                                    public android.view.WindowInsets onApplyWindowInsets(
+                                            android.view.View __frfView,
+                                            android.view.WindowInsets __frfInsets) {
+                                        try {
+                                            int __frfHandled = android.view.WindowInsets.Type.systemBars()
+                                                    | android.view.WindowInsets.Type.displayCutout();
+                                            android.graphics.Insets __frfBars =
+                                                    __frfInsets.getInsets(__frfHandled);
+                                            int __frfBottom = __frfBars.bottom;
+                                            // Stand in for adjustResize, which edge-to-edge turns
+                                            // off. adjustPan and adjustNothing still mean the
+                                            // app wants the keyboard left alone.
+                                            int __frfAdjust = getWindow().getAttributes().softInputMode
+                                                    & android.view.WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST;
+                                            if (__frfAdjust != android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
+                                                    && __frfAdjust != android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING) {
+                                                __frfHandled |= android.view.WindowInsets.Type.ime();
+                                                __frfBottom = Math.max(__frfBottom, __frfInsets.getInsets(
+                                                        android.view.WindowInsets.Type.ime()).bottom);
+                                            }
+                                            android.view.ViewGroup.LayoutParams __frfWebLp =
+                                                    __frfWeb.getLayoutParams();
+                                            if (!(__frfWebLp instanceof android.view.ViewGroup.MarginLayoutParams)) {
+                                                return __frfInsets;
+                                            }
+                                            android.view.ViewGroup.MarginLayoutParams __frfMargins =
+                                                    (android.view.ViewGroup.MarginLayoutParams) __frfWebLp;
+                                            // Only on change: every layout pass here can dispatch
+                                            // the insets again.
+                                            if (__frfMargins.leftMargin != __frfBars.left
+                                                    || __frfMargins.topMargin != __frfBars.top
+                                                    || __frfMargins.rightMargin != __frfBars.right
+                                                    || __frfMargins.bottomMargin != __frfBottom) {
+                                                __frfMargins.setMargins(__frfBars.left, __frfBars.top,
+                                                        __frfBars.right, __frfBottom);
+                                                __frfWeb.setLayoutParams(__frfMargins);
+                                            }
+                                            android.view.ViewGroup.LayoutParams __frfStripeLp =
+                                                    __frfStripe.getLayoutParams();
+                                            if (__frfStripeLp.height != __frfBars.top) {
+                                                __frfStripeLp.height = __frfBars.top;
+                                                __frfStripe.setLayoutParams(__frfStripeLp);
+                                            }
+                                            // Zeroed rather than consumed, so the WebView still
+                                            // hears about later changes but applies none of these
+                                            // a second time.
+                                            return new android.view.WindowInsets.Builder(__frfInsets)
+                                                    .setInsets(__frfHandled, android.graphics.Insets.NONE)
+                                                    .build();
+                                        } catch (Throwable __frfInsetsErr) {
+                                            android.util.Log.e("FixRedFlash", "insets: " + __frfInsetsErr.getMessage());
+                                            return __frfInsets;
+                                        }
+                                    }
+                                });
+                        __frfRoot.requestApplyInsets();
+                        android.util.Log.d("FixRedFlash", "insets: handling bars and keyboard for the WebView");
+                    }
+                }
+            } catch (Throwable __frfStripeErr) {
+                android.util.Log.e("FixRedFlash", "status bar stripe: " + __frfStripeErr.getMessage());
+            }
+        } catch (Exception e) {
+            android.util.Log.e("FixRedFlash", "post-super: " + e.getMessage());
+        }`;
+}
+
 function injectMainActivityBackground(mainActivityPath, backgroundColor, statusBarColor) {
   if (!fs.existsSync(mainActivityPath)) {
     console.log('   ⚠️  MainActivity.java not found');
@@ -317,7 +489,11 @@ function injectMainActivityBackground(mainActivityPath, backgroundColor, statusB
   // patched files get re-injected with the latest code.
   // v4: opt out of Android 15+ edge-to-edge enforcement (targetSdk 35+ ignores
   //     cordova-plugin-statusbar's StatusBarOverlaysWebView=false otherwise).
-  const PATCH_VERSION = 'v4';
+  // v5: draw the status bar stripe from window insets, because targetSdk 36
+  //     ignores that opt-out and no-ops setStatusBarColor.
+  // v6: inset the WebView for the keyboard as well as the bars, from the
+  //     container instead of the WebView, and stand aside for cordova-android 15.
+  const PATCH_VERSION = 'v6';
   const versionMarker = `// FIX_RED_FLASH ${PATCH_VERSION}`;
   if (content.includes(versionMarker)) {
     console.log('   ✓ MainActivity already patched (current version)');
@@ -381,7 +557,7 @@ function injectMainActivityBackground(mainActivityPath, backgroundColor, statusB
     console.log('   🎯 Found onCreate, injecting post-super background...');
     content = content.replace(
       postSuperRegex,
-      `$1\n\n        // FIX_RED_FLASH v4 (post-super): re-assert bg on decor + WebView for SPA navigation,\n        //                              and opt out of Android 15+ edge-to-edge so the status bar\n        //                              gets its own opaque stripe (StatusBarOverlaysWebView=false).\n        try {\n            int bgColor = Color.parseColor("${backgroundColor}");\n            getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));\n            getWindow().getDecorView().setBackgroundColor(bgColor);\n            if (appView != null && appView.getView() != null) {\n                appView.getView().setBackgroundColor(bgColor);\n            }\n            try {\n                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), true);\n                getWindow().setStatusBarColor(Color.parseColor("${effectiveStatusBarColor}"));\n            } catch (Throwable __frfE2e) {\n                android.util.Log.e("FixRedFlash", "edge-to-edge: " + __frfE2e.getMessage());\n            }\n        } catch (Exception e) {\n            android.util.Log.e("FixRedFlash", "post-super: " + e.getMessage());\n        }`
+      `$1\n${buildPostSuperBlock(backgroundColor, effectiveStatusBarColor)}`
     );
     
     fs.writeFileSync(mainActivityPath, content, 'utf8');
@@ -621,7 +797,7 @@ function fixRedFlash(context) {
 
   // 5. Neutralize TransparentTheme so MainActivity launches non-translucent
   console.log('\n🎭 Step 5: Override transparent activity theme');
-  writeSplashThemeOverride(root, backgroundColor);
+  writeSplashThemeOverride(root, backgroundColor, statusBarColor);
   patchMainActivityManifestTheme(manifestPath);
 
   console.log('\n══════════════════════════════════════════════');
@@ -635,7 +811,16 @@ function fixRedFlash(context) {
  * launch theme must remain SplashScreen-compatible. We neutralize OEM flicker
  * by using a transparent icon, a fixed background, and a post-splash theme.
  */
-function writeSplashThemeOverride(root, backgroundColor) {
+function writeSplashThemeOverride(root, backgroundColor, statusBarColor) {
+  // The runtime setStatusBarColor call in MainActivity has been the only thing
+  // colouring the status bar, and it lives exactly as long as the theme's
+  // edge-to-edge opt-out does. Measured on Android 16 it still works below
+  // targetSdk 36; on an API 37 preview the opt-out no longer takes effect and
+  // the call paints nothing, while this theme item still does. Declaring the
+  // colour here is what keeps working once that call stops. targetSdk 36 is a
+  // separate matter — there is no system-drawn status bar background to colour
+  // at all, which is what the stripe in buildPostSuperBlock handles.
+  const lightStatusBar = needsDarkStatusBarIcons(statusBarColor);
   const valuesDir = path.join(root, 'platforms/android/app/src/main/res/values');
   if (!fs.existsSync(valuesDir)) {
     console.log('   ⚠️  values/ directory not found, skipping theme override');
@@ -695,6 +880,8 @@ function writeSplashThemeOverride(root, backgroundColor) {
         <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
         <item name="postSplashScreenTheme">@style/CordovaSplashTheme</item>
         <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
+        <item name="android:statusBarColor">@color/cordova_status_bar_background</item>
+        <item name="android:windowLightStatusBar">${lightStatusBar}</item>
     </style>`;
 
   let themesXml = fs.existsSync(themesPath)
@@ -720,7 +907,10 @@ function writeSplashThemeOverride(root, backgroundColor) {
 <!-- Generated by cordova-plugin-change-app-info / fix-red-flash. Do not edit. -->
 <resources>
     <color name="cordova_splash_background">${backgroundColor}</color>
+    <color name="cordova_status_bar_background">${statusBarColor}</color>
     <style name="CordovaSplashTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:statusBarColor">@color/cordova_status_bar_background</item>
+        <item name="android:windowLightStatusBar">${lightStatusBar}</item>
         <item name="android:windowBackground">@color/cordova_splash_background</item>
         <item name="android:colorBackground">@color/cordova_splash_background</item>
         <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
@@ -745,6 +935,8 @@ function writeSplashThemeOverride(root, backgroundColor) {
         <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
         <item name="postSplashScreenTheme">@style/CordovaSplashTheme</item>
         <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
+        <item name="android:statusBarColor">@color/cordova_status_bar_background</item>
+        <item name="android:windowLightStatusBar">${lightStatusBar}</item>
     </style>
 </resources>
 `;

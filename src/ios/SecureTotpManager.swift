@@ -155,6 +155,26 @@ class SecureTotpManager {
         return SecItemAdd(queryAdd as CFDictionary, nil) == errSecSuccess
     }
     
+    /**
+     * Whether a secret is enrolled on this device.
+     *
+     * generateTotp returns nil for every kind of failure, so the caller cannot
+     * tell "never enrolled here" from "enrolled but unusable". They need
+     * different answers: the first is what a user sees after moving to a new
+     * handset — the keychain item is marked ThisDeviceOnly and does not
+     * travel — and it is fixed by enrolling again, not by checking the secret.
+     */
+    static func hasStoredSecret() -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceNameAes,
+            kSecAttrAccount as String: accountNameAes,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
     // =========================================================================
     // 5. Generate a 6-digit TOTP code with CryptoKit HMAC-SHA256.
     // =========================================================================
@@ -182,7 +202,14 @@ class SecureTotpManager {
         guard let keyData = base32Decode(secretString) else { return nil }
         
         // 2. Calculate the time step.
+        //
+        // UInt64(negative) traps, and a device clock set before 1970 — which a
+        // user can do from Settings — makes the epoch negative. That would take
+        // the whole process down instead of failing the call. Android runs the
+        // same arithmetic on a long and never crashes, so refusing here keeps
+        // the two platforms answering alike.
         let epoch = Int(Date().timeIntervalSince1970) + timeOffset
+        guard epoch > 0 else { return nil }
         var timeStep = UInt64(epoch / expired).bigEndian
         let timeData = Data(bytes: &timeStep, count: MemoryLayout<UInt64>.size)
         
