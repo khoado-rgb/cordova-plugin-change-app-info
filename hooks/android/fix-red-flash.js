@@ -348,12 +348,22 @@ function findMainActivity(baseDir) {
  *
  * It is gated on targetSdk 36 so that nothing changes for builds that still
  * target 35 — those keep the legacy path exactly as it was.
+ *
+ * The same opt-out is what made adjustResize shrink the window for the
+ * keyboard, so at targetSdk 36 the fallback has to stand in for that too:
+ * otherwise the keyboard covers the input it was opened for. The insets are
+ * handled on the container rather than the WebView, because a listener on the
+ * WebView replaces the WebView's own inset handling, and the types handled are
+ * zeroed before they reach it so nothing is applied twice. cordova-android 15
+ * wraps the WebView in a layout that already does all of this, so the
+ * fallback stands aside whenever the WebView is not a direct child of content.
  */
 function buildPostSuperBlock(backgroundColor, statusBarColor) {
   return `
-        // FIX_RED_FLASH v5 (post-super): re-assert bg on decor + WebView for SPA navigation,
-        //                              opt out of Android 15 edge-to-edge, and draw the status
-        //                              bar stripe by hand once targetSdk 36 ignores that opt-out.
+        // FIX_RED_FLASH v6 (post-super): re-assert bg on decor + WebView for SPA navigation,
+        //                              opt out of Android 15 edge-to-edge, and once targetSdk 36
+        //                              ignores that opt-out, draw the status bar stripe and inset
+        //                              the WebView for the bars and the keyboard by hand.
         try {
             int bgColor = Color.parseColor("${backgroundColor}");
             getWindow().setBackgroundDrawable(new ColorDrawable(bgColor));
@@ -372,9 +382,13 @@ function buildPostSuperBlock(backgroundColor, statusBarColor) {
                         && getApplicationInfo().targetSdkVersion >= 36
                         && appView != null && appView.getView() != null) {
                     final android.view.View __frfWeb = appView.getView();
-                    android.view.ViewGroup __frfRoot =
+                    final android.view.ViewGroup __frfRoot =
                             (android.view.ViewGroup) findViewById(android.R.id.content);
-                    if (__frfRoot != null) {
+                    if (__frfRoot != null && __frfWeb.getParent() != __frfRoot) {
+                        // cordova-android 15+ wraps the WebView and insets it for the
+                        // bars and the keyboard itself; a second handler doubles both.
+                        android.util.Log.d("FixRedFlash", "insets: WebView is wrapped, leaving them to its container");
+                    } else if (__frfRoot != null) {
                         // Added after super.onCreate installed the WebView, so the
                         // stripe is the last child and paints over the WebView's
                         // own background colour.
@@ -387,23 +401,69 @@ function buildPostSuperBlock(backgroundColor, statusBarColor) {
                         // wrapper keys its listener on androidx.core.R.id, which
                         // drags in that library's resources. Everything below is
                         // API 30 or older and this branch already requires 35.
-                        __frfWeb.setOnApplyWindowInsetsListener(
+                        //
+                        // On the container, not the WebView: a listener on the
+                        // WebView replaces its own inset handling.
+                        __frfRoot.setOnApplyWindowInsetsListener(
                                 new android.view.View.OnApplyWindowInsetsListener() {
                                     @Override
                                     public android.view.WindowInsets onApplyWindowInsets(
                                             android.view.View __frfView,
                                             android.view.WindowInsets __frfInsets) {
-                                        android.graphics.Insets __frfBars = __frfInsets.getInsets(
-                                                android.view.WindowInsets.Type.systemBars());
-                                        __frfView.setPadding(0, __frfBars.top, 0, __frfBars.bottom);
-                                        android.view.ViewGroup.LayoutParams __frfLp =
-                                                __frfStripe.getLayoutParams();
-                                        __frfLp.height = __frfBars.top;
-                                        __frfStripe.setLayoutParams(__frfLp);
-                                        return __frfInsets;
+                                        try {
+                                            int __frfHandled = android.view.WindowInsets.Type.systemBars()
+                                                    | android.view.WindowInsets.Type.displayCutout();
+                                            android.graphics.Insets __frfBars =
+                                                    __frfInsets.getInsets(__frfHandled);
+                                            int __frfBottom = __frfBars.bottom;
+                                            // Stand in for adjustResize, which edge-to-edge turns
+                                            // off. adjustPan and adjustNothing still mean the
+                                            // app wants the keyboard left alone.
+                                            int __frfAdjust = getWindow().getAttributes().softInputMode
+                                                    & android.view.WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST;
+                                            if (__frfAdjust != android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
+                                                    && __frfAdjust != android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING) {
+                                                __frfHandled |= android.view.WindowInsets.Type.ime();
+                                                __frfBottom = Math.max(__frfBottom, __frfInsets.getInsets(
+                                                        android.view.WindowInsets.Type.ime()).bottom);
+                                            }
+                                            android.view.ViewGroup.LayoutParams __frfWebLp =
+                                                    __frfWeb.getLayoutParams();
+                                            if (!(__frfWebLp instanceof android.view.ViewGroup.MarginLayoutParams)) {
+                                                return __frfInsets;
+                                            }
+                                            android.view.ViewGroup.MarginLayoutParams __frfMargins =
+                                                    (android.view.ViewGroup.MarginLayoutParams) __frfWebLp;
+                                            // Only on change: every layout pass here can dispatch
+                                            // the insets again.
+                                            if (__frfMargins.leftMargin != __frfBars.left
+                                                    || __frfMargins.topMargin != __frfBars.top
+                                                    || __frfMargins.rightMargin != __frfBars.right
+                                                    || __frfMargins.bottomMargin != __frfBottom) {
+                                                __frfMargins.setMargins(__frfBars.left, __frfBars.top,
+                                                        __frfBars.right, __frfBottom);
+                                                __frfWeb.setLayoutParams(__frfMargins);
+                                            }
+                                            android.view.ViewGroup.LayoutParams __frfStripeLp =
+                                                    __frfStripe.getLayoutParams();
+                                            if (__frfStripeLp.height != __frfBars.top) {
+                                                __frfStripeLp.height = __frfBars.top;
+                                                __frfStripe.setLayoutParams(__frfStripeLp);
+                                            }
+                                            // Zeroed rather than consumed, so the WebView still
+                                            // hears about later changes but applies none of these
+                                            // a second time.
+                                            return new android.view.WindowInsets.Builder(__frfInsets)
+                                                    .setInsets(__frfHandled, android.graphics.Insets.NONE)
+                                                    .build();
+                                        } catch (Throwable __frfInsetsErr) {
+                                            android.util.Log.e("FixRedFlash", "insets: " + __frfInsetsErr.getMessage());
+                                            return __frfInsets;
+                                        }
                                     }
                                 });
-                        __frfWeb.requestApplyInsets();
+                        __frfRoot.requestApplyInsets();
+                        android.util.Log.d("FixRedFlash", "insets: handling bars and keyboard for the WebView");
                     }
                 }
             } catch (Throwable __frfStripeErr) {
@@ -431,7 +491,9 @@ function injectMainActivityBackground(mainActivityPath, backgroundColor, statusB
   //     cordova-plugin-statusbar's StatusBarOverlaysWebView=false otherwise).
   // v5: draw the status bar stripe from window insets, because targetSdk 36
   //     ignores that opt-out and no-ops setStatusBarColor.
-  const PATCH_VERSION = 'v5';
+  // v6: inset the WebView for the keyboard as well as the bars, from the
+  //     container instead of the WebView, and stand aside for cordova-android 15.
+  const PATCH_VERSION = 'v6';
   const versionMarker = `// FIX_RED_FLASH ${PATCH_VERSION}`;
   if (content.includes(versionMarker)) {
     console.log('   ✓ MainActivity already patched (current version)');
