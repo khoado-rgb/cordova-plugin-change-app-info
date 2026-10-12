@@ -41,7 +41,7 @@ Add to the Extensibility Configuration in Service Studio:
 - Node.js ≥ 14.0.0
 
 ### Optional (Image Processing)
-- `sharp` ^0.33.0 — recommended, fast native library
+- `sharp` ^0.35.5 — recommended, fast native library (needs Node.js ≥ 20.9; on older Node the hooks fall back to jimp)
 - `jimp` ^1.6.0 — pure JavaScript fallback
 
 These are auto-installed by `scripts/auto-install-deps.js` during the first build. No manual installation needed for MABS 12 builds.

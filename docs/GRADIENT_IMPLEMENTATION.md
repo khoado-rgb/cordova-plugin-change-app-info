@@ -100,7 +100,7 @@ The gradient is drawn pixel-by-pixel for jimp or via SVG overlay for sharp.
 
 ## Requirements
 
-- `sharp` ^0.33.0 (recommended) or `jimp` ^1.6.0 (fallback)
+- `sharp` ^0.35.5 (recommended, needs Node.js ≥ 20.9) or `jimp` ^1.6.0 (fallback, used automatically when sharp cannot load)
 - Auto-installed by `scripts/auto-install-deps.js`
 - If neither is available, the gradient is skipped and a solid color is used instead
 
